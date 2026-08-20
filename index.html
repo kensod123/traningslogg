@@ -238,11 +238,6 @@
     background:none; border:1px solid var(--stroke); color:var(--muted); font-size:16px;
     padding:9px 14px; border-radius:10px; cursor:pointer; flex:none;
   }
-  .btn-next{
-    width:100%; margin-top:16px; padding:14px; border-radius:12px; border:none;
-    background:var(--accent); color:#1a1408; font-family:'Space Grotesk',sans-serif; font-weight:700;
-    font-size:14px; cursor:pointer;
-  }
   .modal-link{
     display:block; width:100%; box-sizing:border-box; text-align:center; padding:12px; border-radius:11px;
     border:1.5px solid var(--stroke); background:var(--surface-2); color:var(--text); text-decoration:none;
@@ -264,6 +259,21 @@
     width:100%; padding:12px; border-radius:11px; border:none; background:var(--accent); color:#1a1408;
     font-weight:700; font-family:'Inter',sans-serif; font-size:14px; cursor:pointer; margin-top:4px;
   }
+
+  .pending-list{ max-height:50vh; overflow-y:auto; margin-bottom:4px; }
+  .pending-item{
+    display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0;
+    border-bottom:1px solid var(--stroke); font-size:13px;
+  }
+  .pending-item:last-child{ border-bottom:none; }
+  .pending-item .pi-main{ color:var(--text); font-weight:600; }
+  .pending-item .pi-sub{ display:block; color:var(--muted); font-size:11px; font-family:'JetBrains Mono',monospace; margin-top:2px; }
+  .pending-item button{
+    flex:none; background:none; border:1px solid var(--stroke); color:var(--muted); border-radius:8px;
+    width:30px; height:30px; cursor:pointer; font-size:14px;
+  }
+  .pending-item button:active{ border-color:#e0645f; color:#e0645f; }
+  .pending-empty{ text-align:center; color:var(--muted); padding:20px 0; font-size:13px; }
 </style>
 </head>
 <body>
@@ -340,8 +350,6 @@
         <div class="rpe-scale" id="rpeScale"></div>
       </div>
 
-      <button class="btn-next" id="btnNext" style="display:none;" onclick="goToNextExercise()"></button>
-
       <div class="rest-note">Tryck på siffran för att välja reps för den omgången</div>
 
       <div class="hint" id="hintBox">
@@ -354,6 +362,7 @@
   <footer>
     <div class="pending" id="pendingLabel"><b id="pendingCount">0</b> ej exporterat</div>
     <div class="footer-row">
+      <button class="btn-settings" onclick="openLog()">☰</button>
       <button class="btn-export" id="btnExport" disabled onclick="openExportConfirm()">Exportera</button>
       <button class="btn-settings" onclick="openSettings()">⚙</button>
     </div>
@@ -688,7 +697,6 @@
     renderNav();
     renderSets();
     renderRpe();
-    renderNextButton();
   }
 
   noteInput.addEventListener('input', () => { sessionState[currentEx].note = noteInput.value; updateExportUi(); });
@@ -728,7 +736,6 @@
       renderSets();
       renderNav();
       renderRpe();
-      renderNextButton();
     });
   }
 
@@ -740,25 +747,6 @@
     rpeScale.querySelectorAll('.rpe-num').forEach(btn => {
       btn.classList.toggle('selected', rpe !== null && Number(btn.textContent) === rpe);
     });
-  }
-
-  // A "Nästa övning" button appears once the current exercise is fully done, instead of
-  // auto-jumping there — auto-advance used to fire the moment set 3's reps were picked,
-  // which cut you off before you could fill in RPE or a note. Now you decide when you're
-  // actually ready to move on.
-  function renderNextButton(){
-    const btnNext = document.getElementById('btnNext');
-    const nextUnfinished = exercises.findIndex((_, i) => !isExDone(i));
-    if(isExDone(currentEx) && nextUnfinished !== -1 && nextUnfinished !== currentEx){
-      btnNext.style.display = '';
-      btnNext.textContent = 'Nästa: ' + exercises[nextUnfinished].short + ' →';
-    } else {
-      btnNext.style.display = 'none';
-    }
-  }
-  function goToNextExercise(){
-    const nextUnfinished = exercises.findIndex((_, i) => !isExDone(i));
-    if(nextUnfinished !== -1) selectExercise(nextUnfinished);
   }
 
   // Starts a brand new pass — called after a successful export clears everything out.
@@ -851,6 +839,76 @@
       btnExport.textContent = 'Ingen anslutning — försök igen senare';
     }
     setTimeout(() => { btnExport.textContent = 'Exportera'; updateExportUi(); }, 2500);
+  }
+
+  // ================= LOG (what's not exported yet) =================
+  // Same purpose as Fiskelog's ☰ list: see exactly what's queued for export, and remove
+  // individual stray entries (e.g. leftover test data) without exporting or resetting
+  // everything else.
+  function openLog(){
+    const rows = [];
+
+    warmupExercises.forEach((name, i) => {
+      const w = warmupState[i];
+      if(w.duration === null) return;
+      rows.push(`<div class="pending-item">
+        <div><div class="pi-main">${name}</div><div class="pi-sub">Uppvärmning · ${w.duration} min${w.time ? ' · ' + w.time : ''}</div></div>
+        <button data-del="warmup" data-idx="${i}">✕</button>
+      </div>`);
+    });
+
+    if(mobilityDone !== null){
+      rows.push(`<div class="pending-item">
+        <div><div class="pi-main">Rörlighetsprogram</div><div class="pi-sub">${mobilityDone === 'Ja' ? 'Gjord' : 'Hoppade över'}</div></div>
+        <button data-del="mobility">✕</button>
+      </div>`);
+    }
+
+    exercises.forEach((ex, exIdx) => {
+      sessionState[exIdx].sets.forEach((s, setIdx) => {
+        if(s.reps === null) return;
+        rows.push(`<div class="pending-item">
+          <div><div class="pi-main">${ex.name}</div><div class="pi-sub">Set ${setIdx + 1} · ${s.reps} reps · ${fmt(s.weight)} kg${s.time ? ' · ' + s.time : ''}</div></div>
+          <button data-del="set" data-ex="${exIdx}" data-set="${setIdx}">✕</button>
+        </div>`);
+      });
+    });
+
+    openOverlay(`
+      <h2>Ej exporterat (${pendingCount()})</h2>
+      <div class="pending-list">${rows.join('') || '<div class="pending-empty">Inget ej exporterat</div>'}</div>
+    `);
+
+    modalBox.querySelectorAll('button[data-del]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const type = btn.dataset.del;
+        if(type === 'warmup'){
+          warmupState[Number(btn.dataset.idx)] = { duration: null, time: null };
+          renderWarmup();
+        } else if(type === 'mobility'){
+          mobilityDone = null;
+          renderMobilityToggle();
+        } else if(type === 'set'){
+          const exIdx = Number(btn.dataset.ex);
+          const setIdx = Number(btn.dataset.set);
+          sessionState[exIdx].sets[setIdx] = { reps: null, weight: sessionState[exIdx].exWeight, time: null };
+          // If that was the exercise's last remaining logged set, clear its RPE/note too —
+          // otherwise they'd silently ride along and attach to whatever set comes next.
+          if(!sessionState[exIdx].sets.some(s => s.reps !== null)){
+            sessionState[exIdx].rpe = null;
+            sessionState[exIdx].note = '';
+          }
+          if(exIdx === currentEx){
+            renderSets();
+            renderRpe();
+            noteInput.value = sessionState[currentEx].note;
+          }
+          renderNav();
+        }
+        updateExportUi();
+        openLog(); // refresh the list in place
+      });
+    });
   }
 
   // ================= SETTINGS =================
