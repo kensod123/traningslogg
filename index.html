@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Träningslogg</title>
+<!-- PWA install support — only takes effect over HTTPS (GitHub Pages), not file://.
+     Manifest gives Android its "Install app" prompt; the apple-touch-icon + meta tags
+     below cover iOS, which ignores manifest.json for home-screen icon/fullscreen mode. -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Träningslogg">
+<meta name="theme-color" content="#15171A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #15171A;
+    --surface: #1E2126;
+    --surface-2: #262a31;
+    --stroke: #33383f;
+    --text: #F2F1ED;
+    --muted: #8B8F97;
+    --accent: #E8A33D;
+    --accent-dim: #4a3a1f;
+    --ok: #6FCF97;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html{ color-scheme: dark; }
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; min-height:100vh;}
+  body{ padding: 20px 16px 60px; display:flex; flex-direction:column; align-items:center; }
+
+  .wrap{ width:100%; max-width:420px; }
+
+  header{ margin-bottom: 18px; }
+  .eyebrow{ font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--accent); margin-bottom:6px; }
+  h1{ font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:600; margin:0 0 4px; }
+  .sub{ color:var(--muted); font-size:13.5px; line-height:1.5; }
+
+  .section-toggle{
+    display:flex; background:var(--surface); border:1px solid var(--stroke); border-radius:12px;
+    padding:4px; margin: 16px 0 18px; gap:4px;
+  }
+  .section-toggle button{
+    flex:1; padding:10px 6px; border:none; border-radius:9px; background:transparent; color:var(--muted);
+    font-family:'Inter',sans-serif; font-weight:600; font-size:12px; cursor:pointer; transition: all .15s ease;
+  }
+  .section-toggle button.active{ background:var(--accent); color:#1a1408; }
+
+  .card{
+    background:var(--surface); border:1px solid var(--stroke); border-radius:18px; padding:20px;
+    margin-bottom:14px;
+  }
+  .ex-name{ font-family:'Space Grotesk',sans-serif; font-size:17px; font-weight:600; margin:0 0 2px; }
+  .ex-meta{ font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--muted); margin-bottom:6px; }
+  .ex-settings{ font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--accent); margin-bottom:16px; }
+  .ex-settings .label{ color:var(--muted); }
+
+  .weight-row{ display:flex; align-items:center; justify-content:center; gap:18px; margin-bottom: 6px; }
+
+  .plate-btn{
+    width:56px; height:56px; border-radius:50%; border:3px solid var(--stroke); background:var(--surface-2);
+    color:var(--text); font-size:20px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    position:relative; transition: transform .08s ease, border-color .15s ease, background .15s ease;
+    font-family:'Space Grotesk',sans-serif;
+  }
+  .plate-btn::after{
+    content:''; position:absolute; inset:8px; border-radius:50%; border:1.5px solid var(--stroke); opacity:.6;
+  }
+  .plate-btn:active{ transform: scale(0.92); border-color:var(--accent); }
+
+  .weight-readout{ text-align:center; min-width:118px; }
+  .weight-num{ font-family:'Space Grotesk',sans-serif; font-size:40px; font-weight:700; line-height:1; letter-spacing:-0.01em; }
+  .weight-unit{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--muted); letter-spacing:.06em; margin-top:4px; }
+
+  .last-time{ text-align:center; font-size:12px; color:var(--muted); margin-top:10px; margin-bottom: 18px; font-family:'JetBrains Mono',monospace; }
+  .last-time strong{ color:var(--text); font-weight:600; }
+
+  .sets{ display:flex; gap:10px; }
+  .set-pill{
+    flex:1; border:1.5px solid var(--stroke); border-radius:13px; padding:14px 6px; text-align:center;
+    background:var(--surface-2); transition: all .15s ease; position:relative;
+  }
+  .set-pill .set-label{ font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; margin-bottom:8px;}
+  .set-pill .set-weight{ font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--muted); margin-top:6px; }
+  .set-pill.done{ border-color:var(--ok); background: rgba(111,207,151,0.08); }
+
+  .reps-btn{
+    width:100%; background:transparent; border:none; outline:none;
+    font-family:'Space Grotesk',sans-serif; font-size:24px; font-weight:700; color:var(--text);
+    text-align:center; cursor:pointer; padding:2px 0;
+  }
+  .reps-btn.empty{ color:var(--muted); }
+
+  .rpe-row{ margin-top:14px; }
+  .rpe-row .rpe-label{
+    font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--muted); letter-spacing:.08em;
+    text-transform:uppercase; margin-bottom:2px;
+  }
+  .rpe-row .rpe-hint{
+    font-family:'Inter',sans-serif; font-size:11px; color:var(--muted); margin-bottom:8px;
+  }
+  .rpe-scale{ display:flex; gap:5px; }
+  .rpe-num{
+    flex:1; padding:10px 0; border-radius:9px; border:1.5px solid var(--stroke); background:var(--surface-2);
+    color:var(--muted); font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:13px; cursor:pointer;
+    transition: all .15s ease; text-align:center;
+  }
+  .rpe-num.selected{ border-color:var(--accent); color:#1a1408; background:var(--accent); }
+
+  .note-field{ margin-top:14px; }
+  .note-label{ font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; margin-bottom:6px; }
+  .note-input{
+    width:100%; background:var(--surface-2); border:1.5px solid var(--stroke); border-radius:11px; padding:10px 12px;
+    color:var(--text); font-family:'Inter',sans-serif; font-size:13px; resize:none; outline:none;
+  }
+  .note-input:focus{ border-color:var(--accent); }
+  .note-input::placeholder{ color:var(--muted); }
+
+  .sheet-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); display:none; align-items:flex-end; justify-content:center; z-index:50;
+  }
+  .sheet-overlay.open{ display:flex; }
+  .sheet{
+    width:100%; max-width:420px; background:var(--surface); border-radius:20px 20px 0 0; border:1px solid var(--stroke); border-bottom:none;
+    max-height:70vh; display:flex; flex-direction:column; overflow:hidden;
+  }
+  .sheet-header{ padding:16px 20px 10px; border-bottom:1px solid var(--stroke); }
+  .sheet-title{ font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+  .sheet-list{ overflow-y:auto; padding:6px 0 max(6px, env(safe-area-inset-bottom)); }
+  .sheet-option{
+    padding:14px 20px; font-family:'Space Grotesk',sans-serif; font-size:19px; font-weight:600; color:var(--text);
+    display:flex; align-items:center; justify-content:space-between; cursor:pointer;
+  }
+  .sheet-option:active{ background:var(--surface-2); }
+  .sheet-option.selected{ color:var(--accent); }
+  .sheet-option .check{ width:18px; height:18px; border-radius:50%; border:2px solid var(--stroke); }
+  .sheet-option.selected .check{ border-color:var(--accent); background:var(--accent); }
+  .sheet-option.empty{ color:var(--muted); }
+
+  .ex-nav-wrap{ position:relative; margin-bottom:10px; }
+  .ex-nav{ display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
+  .ex-nav::-webkit-scrollbar{ display:none; }
+  .ex-nav-wrap::before, .ex-nav-wrap::after{
+    content:''; position:absolute; top:0; bottom:4px; width:28px; pointer-events:none; z-index:1;
+    transition: opacity .15s ease;
+  }
+  .ex-nav-wrap::before{ left:0; background:linear-gradient(90deg, var(--bg) 0%, transparent 100%); opacity:0; }
+  .ex-nav-wrap::after{ right:0; background:linear-gradient(270deg, var(--bg) 0%, transparent 100%); opacity:0; }
+  .ex-nav-wrap.scroll-left::before{ opacity:1; }
+  .ex-nav-wrap.scroll-right::after{ opacity:1; }
+  .ex-scrollbar{ height:3px; background:var(--stroke); border-radius:2px; margin-bottom:16px; overflow:hidden; }
+  .ex-scrollbar-thumb{ height:100%; background:var(--accent); border-radius:2px; transition: transform .1s linear, width .1s linear; }
+  .ex-chip{
+    flex:0 0 auto; padding:9px 14px; border-radius:20px; border:1.5px solid var(--stroke); background:var(--surface);
+    color:var(--muted); font-family:'JetBrains Mono',monospace; font-size:11.5px; white-space:nowrap; cursor:pointer;
+    display:flex; align-items:center; gap:6px; transition: all .15s ease;
+  }
+  .ex-chip .dot{ width:6px; height:6px; border-radius:50%; background:var(--stroke); flex:0 0 auto; }
+  .ex-chip.done .dot{ background:var(--ok); }
+  .ex-chip.active{ border-color:var(--accent); color:var(--text); background:rgba(232,163,61,0.1); }
+  .ex-progress{ text-align:center; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--muted); margin-bottom:14px; }
+
+  .hint{
+    margin-top:16px; padding:12px 14px; background:rgba(232,163,61,0.08); border:1px solid var(--accent-dim);
+    border-radius:11px; font-size:12.5px; color:#d9b877; line-height:1.5;
+  }
+  .hint .pt-note{ margin-top:6px; padding-top:6px; border-top:1px solid var(--accent-dim); }
+
+  .rest-note{ text-align:center; font-size:11.5px; color:var(--muted); margin-top:14px; font-family:'JetBrains Mono',monospace; }
+
+  .all-done{
+    text-align:center; padding:20px; background:rgba(111,207,151,0.08); border:1px solid var(--ok);
+    border-radius:14px; margin-bottom:14px; font-family:'Space Grotesk',sans-serif; font-weight:600; color:var(--ok);
+  }
+
+  /* Warm-up list */
+  .wu-card{
+    display:flex; align-items:center; justify-content:space-between; padding:16px 18px;
+    background:var(--surface); border:1.5px solid var(--stroke); border-radius:15px; margin-bottom:10px; transition: all .15s ease;
+  }
+  .wu-card.done{ border-color:var(--ok); background:rgba(111,207,151,0.08); }
+  .wu-name{ font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:600; }
+  .wu-sub{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--muted); margin-top:2px; }
+  .wu-card.done .wu-sub{ color:var(--ok); }
+  .wu-action{
+    background:var(--surface-2); border:1.5px solid var(--stroke); border-radius:10px; padding:9px 14px;
+    color:var(--text); font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:600; cursor:pointer;
+  }
+  .wu-card.done .wu-action{ border-color:var(--ok); color:var(--ok); background:transparent; }
+
+  /* Mobility */
+  .mob-list{ margin-bottom:16px; }
+  .mob-item{
+    display:flex; align-items:center; justify-content:space-between; padding:12px 16px;
+    background:var(--surface-2); border-radius:12px; margin-bottom:8px;
+  }
+  .mob-item .mob-name{ font-size:13.5px; }
+  .mob-item .mob-detail{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--muted); }
+  .mob-toggle{ display:flex; gap:10px; }
+  .mob-toggle button{
+    flex:1; padding:16px; border-radius:13px; border:1.5px solid var(--stroke); background:var(--surface-2);
+    color:var(--muted); font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:15px; cursor:pointer; transition: all .15s ease;
+  }
+  .mob-toggle button.selected-yes{ border-color:var(--ok); color:var(--ok); background:rgba(111,207,151,0.08); }
+  .mob-toggle button.selected-no{ border-color:#e0645f; color:#e0645f; background:rgba(224,100,95,0.08); }
+
+  footer{ margin-top: 22px; }
+  .pending{ text-align:center; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--muted); margin-bottom:10px; }
+  .pending b{ color:var(--text); }
+  .footer-row{ display:flex; gap:8px; }
+  .btn-export{
+    flex:1; border:none; border-radius:12px; padding:13px 10px; font-size:14px; font-weight:700;
+    background:var(--ok); color:#04241a; font-family:'Inter',sans-serif; cursor:pointer;
+  }
+  .btn-export:disabled{ background:#33403a; color:#6b776f; }
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); display:none; align-items:center; justify-content:center; z-index:60; padding:20px;
+    overflow-y:auto;
+  }
+  .modal-overlay.open{ display:flex; }
+  .modal-box{
+    width:100%; max-width:380px; background:var(--surface); border:1px solid var(--stroke); border-radius:18px; padding:22px;
+    margin:auto;
+  }
+  .modal-box h2{ font-family:'Space Grotesk',sans-serif; font-size:18px; margin:0 0 8px; }
+  .modal-box p{ color:var(--muted); font-size:13px; line-height:1.5; margin:0 0 18px; }
+  .modal-box .row-actions{ display:flex; gap:10px; }
+  .modal-box .row-actions button{
+    flex:1; padding:12px; border-radius:11px; font-family:'Inter',sans-serif; font-weight:600; font-size:13.5px; cursor:pointer;
+  }
+  .btn-cancel{ background:var(--surface-2); border:1px solid var(--stroke); color:var(--text); }
+  .btn-confirm{ background:var(--ok); border:none; color:#04241a; }
+
+  .btn-settings{
+    background:none; border:1px solid var(--stroke); color:var(--muted); font-size:16px;
+    padding:9px 14px; border-radius:10px; cursor:pointer; flex:none;
+  }
+  .modal-link{
+    display:block; width:100%; box-sizing:border-box; text-align:center; padding:12px; border-radius:11px;
+    border:1.5px solid var(--stroke); background:var(--surface-2); color:var(--text); text-decoration:none;
+    font-family:'Inter',sans-serif; font-weight:600; font-size:13.5px; margin-bottom:10px;
+  }
+  .modal-link.disabled{ color:var(--muted); pointer-events:none; opacity:.55; }
+  .modal-hr{ border:none; border-top:1px solid var(--stroke); margin:16px 0; }
+  .field{ margin-bottom:12px; }
+  .field label{
+    display:block; font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--muted);
+    letter-spacing:.06em; text-transform:uppercase; margin-bottom:6px;
+  }
+  .field input{
+    width:100%; box-sizing:border-box; background:var(--surface-2); border:1.5px solid var(--stroke); border-radius:10px;
+    padding:10px 12px; color:var(--text); font-family:'Inter',sans-serif; font-size:13px; outline:none;
+  }
+  .field input:focus{ border-color:var(--accent); }
+  .modal-save{
+    width:100%; padding:12px; border-radius:11px; border:none; background:var(--accent); color:#1a1408;
+    font-weight:700; font-family:'Inter',sans-serif; font-size:14px; cursor:pointer; margin-top:4px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow" id="passLabel">Prototyp · pass —</div>
+    <h1>Träningslogg</h1>
+    <div class="sub">PT-schema · Uppvärmning, rörlighet och styrka i ett pass.</div>
+  </header>
+
+  <div class="section-toggle" id="sectionToggle">
+    <button data-sec="warmup">Uppvärmning</button>
+    <button data-sec="mobility">Rörlighet</button>
+    <button data-sec="strength">Styrka</button>
+  </div>
+
+  <!-- ===================== WARM-UP ===================== -->
+  <div id="panelWarmup">
+    <div class="ex-progress" id="wuProgress"></div>
+    <div id="wuList"></div>
+    <div class="rest-note">Tryck en maskin för att logga tid (5–10 min riktvärde). Du behöver inte göra alla.</div>
+  </div>
+
+  <!-- ===================== MOBILITY ===================== -->
+  <div id="panelMobility" style="display:none;">
+    <div class="card">
+      <div class="ex-name">Rörlighetsprogram</div>
+      <div class="ex-meta">Görs efter uppvärmning, innan styrka</div>
+      <div class="mob-list" id="mobList"></div>
+      <div class="mob-toggle" id="mobToggle">
+        <button data-val="Ja">Gjord ✓</button>
+        <button data-val="Nej">Hoppade över</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== STRENGTH ===================== -->
+  <div id="panelStrength" style="display:none;">
+    <div class="ex-nav-wrap" id="exNavWrap">
+      <div class="ex-nav" id="exNav"></div>
+    </div>
+    <div class="ex-scrollbar"><div class="ex-scrollbar-thumb" id="exScrollThumb"></div></div>
+    <div class="ex-progress" id="exProgress"></div>
+    <div class="all-done" id="allDone" style="display:none;">Alla övningar klara! 💪</div>
+
+    <div class="card">
+      <div class="ex-name" id="exName"></div>
+      <div class="ex-meta" id="exMeta"></div>
+      <div class="ex-settings" id="exSettings"></div>
+
+      <div id="exWeightBlock">
+        <div class="weight-row">
+          <button class="plate-btn minus" onclick="adjustExWeight(-2.5)">−</button>
+          <div class="weight-readout">
+            <div class="weight-num" id="exWeightNum">–</div>
+            <div class="weight-unit">KG · ALLA SET</div>
+          </div>
+          <button class="plate-btn plus" onclick="adjustExWeight(2.5)">+</button>
+        </div>
+        <div class="last-time" id="lastTime"></div>
+      </div>
+
+      <div class="sets" id="setsRow"></div>
+
+      <div class="note-field">
+        <div class="note-label">Anteckning (valfri)</div>
+        <textarea class="note-input" id="noteInput" rows="2" placeholder="T.ex. form, känsla, skada..."></textarea>
+      </div>
+
+      <div class="rpe-row" id="rpeRow" style="display:none;">
+        <div class="rpe-label">RPE · hur kändes det (1–10)</div>
+        <div class="rpe-hint">1 = mycket lätt · 10 = max, inget kvar i tanken</div>
+        <div class="rpe-scale" id="rpeScale"></div>
+      </div>
+
+      <div class="rest-note">Tryck på siffran för att välja reps för den omgången</div>
+
+      <div class="hint" id="hintBox">
+        Vikten är låst för hela övningen. Justera bara om du faktiskt byter vikt — annars: tryck bara på seten.
+        <div class="pt-note" id="ptNote" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="pending" id="pendingLabel"><b id="pendingCount">0</b> ej exporterat</div>
+    <div class="footer-row">
+      <button class="btn-export" id="btnExport" disabled onclick="openExportConfirm()">Exportera</button>
+      <button class="btn-settings" onclick="openSettings()">⚙</button>
+    </div>
+  </footer>
+</div>
+
+<div class="sheet-overlay" id="sheetOverlay">
+  <div class="sheet">
+    <div class="sheet-header">
+      <div class="sheet-title" id="sheetTitle">VÄLJ</div>
+    </div>
+    <div class="sheet-list" id="sheetList"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box" id="modalBox"></div>
+</div>
+
+<script>
+  // ---------- Shared helpers ----------
+  function fmt(n){
+    return n.toLocaleString('sv-SE', {minimumFractionDigits: n % 1 === 0 ? 0 : 1});
+  }
+  function nowTimeStr(){
+    const d = new Date();
+    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0') + ':' + d.getSeconds().toString().padStart(2,'0');
+  }
+  function todayPassId(){
+    const d = new Date();
+    return 'P' + d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+  }
+
+  // ---------- Persistence (localStorage) ----------
+  // Mirrors the Fiskelog app: everything not yet exported survives a closed tab,
+  // a locked phone, or a backgrounded browser killing the page mid-workout.
+  const PENDING_KEY = 'tl_pending_v1';
+  const CONFIG_KEY = 'tl_config_v1';
+
+  function loadPending(){
+    try { return JSON.parse(localStorage.getItem(PENDING_KEY) || 'null'); } catch(e){ return null; }
+  }
+  function pendingHasData(saved){
+    if(!saved) return false;
+    const w = (saved.warmup || []).some(s => s && s.duration !== null && s.duration !== undefined);
+    const m = saved.mobility !== null && saved.mobility !== undefined;
+    const s = (saved.strength || []).some(ex => ex && ex.sets && ex.sets.some(set => set && set.reps !== null && set.reps !== undefined));
+    return w || m || s;
+  }
+  function savePending(){
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify({ passId: PASS_ID, warmup: warmupState, mobility: mobilityDone, strength: sessionState })); }
+    catch(e){ /* private browsing / storage disabled — session just won't survive a reload */ }
+  }
+
+  // Baked-in backend URL, deployed 2026-08-20. Editable in ⚙ Inställningar — a manually
+  // typed URL is tracked separately (defaultAtSave) so a future update to this constant
+  // (e.g. after redeploying to a new URL) never silently overwrites a deliberate override,
+  // but DOES auto-upgrade a config that was never customized. Same pattern as Fiskelog,
+  // which learned the hard way that a stale localStorage URL can otherwise "win" silently.
+  const DEFAULT_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxArGkD5O046ToCtQJLIrmVKbvPqGynbcr9MEev0KrW-8cVFxaXf578eiLlGXrRBr4x/exec';
+  // Best guess at the hosted repo path, matching Fiskelog's kensod123.github.io/<repo>/
+  // convention — pt-schema.pdf is uploaded alongside index.html (see README "Hosting").
+  // Just a convenience default, not protected like DEFAULT_WEB_APP_URL: wrong or missing
+  // just means a dead link in ⚙, not a broken app. Correct it there if the repo name differs.
+  const DEFAULT_PT_PDF_URL = 'https://kensod123.github.io/traningslogg/pt-schema.pdf';
+
+  function loadConfig(){
+    const defaults = { webAppUrl: DEFAULT_WEB_APP_URL, secret: '', sheetUrl: '', ptPdfUrl: DEFAULT_PT_PDF_URL, defaultAtSave: DEFAULT_WEB_APP_URL };
+    try {
+      const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null');
+      if (!saved) return defaults;
+      const merged = Object.assign({}, defaults, saved);
+      if (merged.defaultAtSave && merged.defaultAtSave !== DEFAULT_WEB_APP_URL) {
+        // Never manually customized — pick up this file's (newer) baked-in URL automatically.
+        merged.webAppUrl = DEFAULT_WEB_APP_URL;
+        merged.defaultAtSave = DEFAULT_WEB_APP_URL;
+      }
+      return merged;
+    } catch(e){ return defaults; }
+  }
+  function saveConfig(){
+    try { localStorage.setItem(CONFIG_KEY, JSON.stringify(config)); }
+    catch(e){ /* private browsing / storage disabled */ }
+  }
+
+  const savedPending = loadPending();
+  const config = loadConfig();
+  // A pass in progress keeps its original Pass-ID (even across days) until it's exported —
+  // otherwise reopening the app tomorrow would mislabel yesterday's unsent sets as today's.
+  let PASS_ID = pendingHasData(savedPending) ? savedPending.passId : todayPassId();
+  document.getElementById('passLabel').textContent = 'Prototyp · pass ' + PASS_ID;
+
+  // Generic bottom sheet: options is array of {value, label}, onSelect(value) called on tap.
+  const sheetOverlay = document.getElementById('sheetOverlay');
+  const sheetTitle = document.getElementById('sheetTitle');
+  const sheetList = document.getElementById('sheetList');
+  function openPickerSheet(title, options, currentValue, onSelect){
+    sheetTitle.textContent = title;
+    sheetList.innerHTML = '';
+    options.forEach(opt => {
+      const el = document.createElement('div');
+      const isSelected = currentValue === opt.value;
+      el.className = 'sheet-option' + (isSelected ? ' selected' : '') + (opt.value === null ? ' empty' : '');
+      el.innerHTML = `<span>${opt.label}</span><span class="check"></span>`;
+      el.addEventListener('click', () => {
+        closeSheet();
+        onSelect(opt.value);
+      });
+      sheetList.appendChild(el);
+    });
+    sheetOverlay.classList.add('open');
+  }
+  function closeSheet(){ sheetOverlay.classList.remove('open'); }
+  sheetOverlay.addEventListener('click', (e) => { if(e.target === sheetOverlay){ closeSheet(); } });
+
+  // ---------- Section switching ----------
+  const panels = { warmup: document.getElementById('panelWarmup'), mobility: document.getElementById('panelMobility'), strength: document.getElementById('panelStrength') };
+  const toggleBtns = document.querySelectorAll('#sectionToggle button');
+  let currentSection = 'warmup';
+  function selectSection(sec){
+    currentSection = sec;
+    Object.keys(panels).forEach(k => panels[k].style.display = (k === sec ? '' : 'none'));
+    toggleBtns.forEach(b => b.classList.toggle('active', b.dataset.sec === sec));
+    if(sec === 'strength'){ requestAnimationFrame(updateNavScrollUi); }
+  }
+  toggleBtns.forEach(b => b.addEventListener('click', () => selectSection(b.dataset.sec)));
+
+  // ================= WARM-UP =================
+  const warmupExercises = ['Assault Bike', 'Gåband / Elevated', 'Crosstrainer', 'Stakmaskin/Ski ERG', 'Roddmaskin'];
+  const durationOptions = Array.from({length:15}, (_, i) => 15 - i); // 15 down to 1 min
+  let warmupState = (pendingHasData(savedPending) && Array.isArray(savedPending.warmup) && savedPending.warmup.length === warmupExercises.length)
+    ? savedPending.warmup
+    : warmupExercises.map(() => ({ duration: null, time: null }));
+
+  function renderWarmup(){
+    const list = document.getElementById('wuList');
+    list.innerHTML = '';
+    warmupExercises.forEach((name, i) => {
+      const s = warmupState[i];
+      const card = document.createElement('div');
+      card.className = 'wu-card' + (s.duration !== null ? ' done' : '');
+      card.innerHTML = `
+        <div>
+          <div class="wu-name">${name}</div>
+          <div class="wu-sub">${s.duration !== null ? '✓ ' + s.duration + ' min · ' + s.time : 'Riktvärde 5–10 min'}</div>
+        </div>
+        <button type="button" class="wu-action">${s.duration !== null ? 'Ändra' : 'Logga'}</button>
+      `;
+      card.querySelector('.wu-action').addEventListener('click', () => openWarmupSheet(i));
+      list.appendChild(card);
+    });
+    const doneCount = warmupState.filter(s => s.duration !== null).length;
+    document.getElementById('wuProgress').textContent = `${doneCount}/${warmupExercises.length} loggade`;
+    updateExportUi();
+  }
+
+  function openWarmupSheet(i){
+    const opts = [{value: null, label: '—'}].concat(durationOptions.map(m => ({value: m, label: m + ' min'})));
+    openPickerSheet(warmupExercises[i] + ' · VÄLJ TID', opts, warmupState[i].duration, (val) => {
+      warmupState[i].duration = val;
+      warmupState[i].time = val === null ? null : nowTimeStr();
+      renderWarmup();
+    });
+  }
+
+  // ================= MOBILITY =================
+  const mobilityExercises = [
+    { name: 'SB Framsida Lår Stretch', detail: '1 min' },
+    { name: 'Liggande Hamstring Stretch Mot Vägg', detail: '1 min' },
+    { name: 'Kvastskaft Rotationer', detail: '10 rep' },
+  ];
+  let mobilityDone = pendingHasData(savedPending) && 'mobility' in savedPending ? savedPending.mobility : null; // null | 'Ja' | 'Nej'
+
+  function renderMobilityList(){
+    const list = document.getElementById('mobList');
+    list.innerHTML = '';
+    mobilityExercises.forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'mob-item';
+      row.innerHTML = `<span class="mob-name">${e.name}</span><span class="mob-detail">${e.detail}</span>`;
+      list.appendChild(row);
+    });
+  }
+  function renderMobilityToggle(){
+    document.querySelectorAll('#mobToggle button').forEach(b => {
+      b.classList.remove('selected-yes', 'selected-no');
+      if(mobilityDone === 'Ja' && b.dataset.val === 'Ja') b.classList.add('selected-yes');
+      if(mobilityDone === 'Nej' && b.dataset.val === 'Nej') b.classList.add('selected-no');
+    });
+  }
+  document.querySelectorAll('#mobToggle button').forEach(b => {
+    b.addEventListener('click', () => { mobilityDone = b.dataset.val; renderMobilityToggle(); updateExportUi(); });
+  });
+
+  // ================= STRENGTH =================
+  const repOptions = Array.from({length:15}, (_, i) => 15 - i);
+  const rpeOptions = Array.from({length:10}, (_, i) => 10 - i);
+  const DEFAULT_META = '3 SET × 10–15 REP · VILA 60 SEK';
+
+  // Machine settings + starting weights, from Maskininställningar-fliken (PT-schema, Marcus Brundin)
+  const exercises = [
+    { name: 'Sittande Rodd i Maskin', short: 'Rodd', startWeight: 25, settings: 'Sits 3 · Bröst 4' },
+    { name: 'Framsida Lår i Maskin', short: 'Framsida Lår', startWeight: 12.5, settings: 'Rygg 5 · Knä 12 · Fot XL' },
+    { name: 'Lat Pulldown i maskin', short: 'Lat Pulldown', startWeight: 22.5, settings: 'Sits på 5' },
+    { name: 'Benpress i Maskin', short: 'Benpress', startWeight: 27.5, settings: 'Sits på 5' },
+    { name: 'Torso Rotation i maskin', short: 'Torso Rotation', startWeight: 15, settings: 'Knäplattan 60° · Bröstplattan 6:an',
+      ptNote: 'Börja med den svaga sidan och jobba med samma vikt på den starka sidan.' },
+    { name: 'Bröstpress i Maskin', short: 'Bröstpress', startWeight: 12.5, settings: 'Sits 4 · Armar 2' },
+  ];
+
+  // "Last session" data per exercise, keyed by exercise name (not array index — matches
+  // the self-describing shape Code.gs's doGet returns). Empty until fetchLastSessions()
+  // populates it from the real backend; stays empty (→ "Inget tidigare pass loggat") when
+  // no backend is configured yet or the exercise genuinely has no history.
+  let lastSessions = {};
+
+  async function fetchLastSessions(){
+    if(!config.webAppUrl) return;
+    try{
+      const res = await fetch(config.webAppUrl);
+      const data = await res.json();
+      if(data.success && data.lastSessions){
+        lastSessions = data.lastSessions;
+        renderLastTime();
+      }
+    } catch(e){ /* offline or backend unreachable — keep whatever we already had */ }
+  }
+
+  let currentEx = 0;
+
+  function freshState(){
+    return exercises.map(e => ({
+      exWeight: e.startWeight,
+      rpe: null,
+      note: '',
+      sets: [
+        { reps: null, weight: e.startWeight, time: null },
+        { reps: null, weight: e.startWeight, time: null },
+        { reps: null, weight: e.startWeight, time: null },
+      ]
+    }));
+  }
+  let sessionState = (pendingHasData(savedPending) && Array.isArray(savedPending.strength) && savedPending.strength.length === exercises.length)
+    ? savedPending.strength
+    : freshState();
+
+  const exNav = document.getElementById('exNav');
+  const exProgress = document.getElementById('exProgress');
+  const allDoneEl = document.getElementById('allDone');
+  const exNameEl = document.getElementById('exName');
+  const exMetaEl = document.getElementById('exMeta');
+  const exSettingsEl = document.getElementById('exSettings');
+  const lastTimeEl = document.getElementById('lastTime');
+  const ptNoteEl = document.getElementById('ptNote');
+  const rpeRow = document.getElementById('rpeRow');
+  const rpeScale = document.getElementById('rpeScale');
+  const noteInput = document.getElementById('noteInput');
+  const exNavWrap = document.getElementById('exNavWrap');
+  const exScrollThumb = document.getElementById('exScrollThumb');
+
+  // Build the 1-10 RPE buttons once.
+  rpeOptions.slice().reverse().forEach(n => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'rpe-num';
+    btn.textContent = n;
+    btn.addEventListener('click', () => {
+      const state = sessionState[currentEx];
+      state.rpe = state.rpe === n ? null : n; // tap again to clear
+      renderRpe();
+      updateExportUi();
+    });
+    rpeScale.appendChild(btn);
+  });
+
+  function updateNavScrollUi(){
+    const scrollable = exNav.scrollWidth > exNav.clientWidth + 1;
+    exNavWrap.classList.toggle('scroll-left', scrollable && exNav.scrollLeft > 4);
+    exNavWrap.classList.toggle('scroll-right', scrollable && exNav.scrollLeft < exNav.scrollWidth - exNav.clientWidth - 4);
+    if(!scrollable){ exScrollThumb.style.width = '100%'; exScrollThumb.style.transform = 'translateX(0)'; return; }
+    const thumbWidth = Math.max(20, (exNav.clientWidth / exNav.scrollWidth) * 100);
+    const maxScroll = exNav.scrollWidth - exNav.clientWidth;
+    const traveled = maxScroll > 0 ? exNav.scrollLeft / maxScroll : 0;
+    const trackPx = exNavWrap.clientWidth;
+    const thumbPx = (thumbWidth / 100) * trackPx;
+    exScrollThumb.style.width = thumbWidth + '%';
+    exScrollThumb.style.transform = 'translateX(' + (traveled * (trackPx - thumbPx)) + 'px)';
+  }
+  exNav.addEventListener('scroll', updateNavScrollUi);
+  window.addEventListener('resize', updateNavScrollUi);
+
+  function exWeightGet(){ return sessionState[currentEx].exWeight; }
+  function setsGet(){ return sessionState[currentEx].sets; }
+  function isExDone(i){ return sessionState[i].sets.every(s => s.reps !== null); }
+
+  function renderNav(){
+    exNav.innerHTML = '';
+    exercises.forEach((e, i) => {
+      const chip = document.createElement('div');
+      chip.className = 'ex-chip' + (i === currentEx ? ' active' : '') + (isExDone(i) ? ' done' : '');
+      chip.innerHTML = `<span class="dot"></span><span>${e.short}</span>`;
+      chip.addEventListener('click', () => selectExercise(i));
+      exNav.appendChild(chip);
+    });
+    const doneCount = exercises.filter((_, i) => isExDone(i)).length;
+    exProgress.textContent = `Övning ${currentEx + 1} av ${exercises.length} · ${doneCount}/${exercises.length} klara`;
+    allDoneEl.style.display = doneCount === exercises.length ? 'block' : 'none';
+    requestAnimationFrame(updateNavScrollUi);
+    updateExportUi();
+  }
+
+  function renderLastTime(){
+    const last = lastSessions[exercises[currentEx].name];
+    if(!last){
+      lastTimeEl.innerHTML = 'Inget tidigare pass loggat för denna övning';
+      return;
+    }
+    lastTimeEl.innerHTML = `Förra passet: <strong>${fmt(last.weight)} kg</strong> · ${last.reps.join(' · ')}`;
+  }
+
+  function selectExercise(i){
+    currentEx = i;
+    const ex = exercises[i];
+    exNameEl.textContent = ex.name;
+    exMetaEl.textContent = ex.meta || DEFAULT_META;
+    exSettingsEl.innerHTML = ex.settings ? '<span class="label">Maskininställning:</span> ' + ex.settings : '';
+    document.getElementById('exWeightNum').textContent = fmt(exWeightGet());
+    if(ex.ptNote){ ptNoteEl.textContent = ex.ptNote; ptNoteEl.style.display = ''; }
+    else { ptNoteEl.style.display = 'none'; }
+    noteInput.value = sessionState[i].note;
+    renderLastTime();
+    renderNav();
+    renderSets();
+    renderRpe();
+  }
+
+  noteInput.addEventListener('input', () => { sessionState[currentEx].note = noteInput.value; updateExportUi(); });
+
+  function adjustExWeight(delta){
+    const state = sessionState[currentEx];
+    state.exWeight = Math.max(0, Math.round((state.exWeight + delta) * 10) / 10);
+    document.getElementById('exWeightNum').textContent = fmt(state.exWeight);
+    state.sets.forEach(s => s.weight = state.exWeight);
+    renderSets();
+    updateExportUi();
+  }
+
+  function renderSets(){
+    const sets = setsGet();
+    const row = document.getElementById('setsRow');
+    row.innerHTML = '';
+    sets.forEach((s, i) => {
+      const pill = document.createElement('div');
+      pill.className = 'set-pill' + (s.reps !== null ? ' done' : '');
+      pill.innerHTML = `
+        <div class="set-label">Set ${i+1}</div>
+        <button type="button" class="reps-btn ${s.reps === null ? 'empty' : ''}">${s.reps !== null ? s.reps : '—'}</button>
+        <div class="set-weight">${fmt(s.weight)} kg</div>
+      `;
+      pill.querySelector('.reps-btn').addEventListener('click', () => openRepsSheet(i));
+      row.appendChild(pill);
+    });
+  }
+
+  function openRepsSheet(setIndex){
+    const sets = setsGet();
+    const opts = [{value: null, label: '—'}].concat(repOptions.map(r => ({value: r, label: String(r)})));
+    openPickerSheet(`SET ${setIndex + 1} · VÄLJ REPS`, opts, sets[setIndex].reps, (val) => {
+      sets[setIndex].reps = val;
+      sets[setIndex].time = val === null ? null : nowTimeStr();
+      renderSets();
+      renderNav();
+      renderRpe();
+      maybeAdvance();
+    });
+  }
+
+  function renderRpe(){
+    const sets = setsGet();
+    const lastSetDone = sets[2].reps !== null;
+    rpeRow.style.display = lastSetDone ? '' : 'none';
+    const rpe = sessionState[currentEx].rpe;
+    rpeScale.querySelectorAll('.rpe-num').forEach(btn => {
+      btn.classList.toggle('selected', rpe !== null && Number(btn.textContent) === rpe);
+    });
+  }
+
+  // After completing the current exercise's last set, auto-jump to the next
+  // unfinished exercise so you don't have to reach for the nav mid-workout.
+  function maybeAdvance(){
+    if(!isExDone(currentEx)) return;
+    const nextUnfinished = exercises.findIndex((_, i) => !isExDone(i));
+    if(nextUnfinished !== -1 && nextUnfinished !== currentEx){
+      setTimeout(() => selectExercise(nextUnfinished), 600);
+    }
+  }
+
+  // Starts a brand new pass — called after a successful export clears everything out.
+  // Not user-facing as a button: an unconfirmed full-wipe control is too dangerous once
+  // real, unexported data is on the line (production Fiskelog doesn't have one either).
+  function clearPendingSession(){
+    PASS_ID = todayPassId();
+    document.getElementById('passLabel').textContent = 'Prototyp · pass ' + PASS_ID;
+    warmupState = warmupExercises.map(() => ({ duration: null, time: null }));
+    mobilityDone = null;
+    sessionState = freshState();
+    renderWarmup();
+    renderMobilityToggle();
+    selectExercise(0);
+    selectSection('warmup');
+    updateExportUi();
+  }
+
+  // ================= MODAL (shared by export-confirm and settings) =================
+  const modalOverlay = document.getElementById('modalOverlay');
+  const modalBox = document.getElementById('modalBox');
+  function openOverlay(html){ modalBox.innerHTML = html; modalOverlay.classList.add('open'); }
+  function closeOverlay(){ modalOverlay.classList.remove('open'); }
+  modalOverlay.addEventListener('click', (e) => { if(e.target === modalOverlay){ closeOverlay(); } });
+
+  // ================= EXPORT =================
+  // Mirrors the Fiskelog app's export pattern: a pending counter, a confirm-before-send
+  // modal, and a POST to the Apps Script web app. config.webAppUrl is empty until the
+  // Google Sheet + Apps Script backend exists (set it from ⚙ Inställningar once it does) —
+  // performExport() says so plainly instead of pretending to succeed.
+  const btnExport = document.getElementById('btnExport');
+  const pendingCountEl = document.getElementById('pendingCount');
+
+  function pendingCount(){
+    const warmupCount = warmupState.filter(s => s.duration !== null).length;
+    const mobilityCount = mobilityDone !== null ? 1 : 0;
+    const strengthCount = sessionState.reduce((sum, ex) => sum + ex.sets.filter(s => s.reps !== null).length, 0);
+    return warmupCount + mobilityCount + strengthCount;
+  }
+
+  function updateExportUi(){
+    const n = pendingCount();
+    pendingCountEl.textContent = n;
+    btnExport.disabled = n === 0;
+    savePending();
+  }
+
+  function openExportConfirm(){
+    const n = pendingCount();
+    if(n === 0) return;
+    openOverlay(`
+      <h2>Exportera ${n} rad${n === 1 ? '' : 'er'}?</h2>
+      <p>Skickar all ej exporterad data till Google Sheet. Kräver internetanslutning.</p>
+      <div class="row-actions">
+        <button class="btn-cancel" id="mCancel">Avbryt</button>
+        <button class="btn-confirm" id="mConfirm">Ja, exportera</button>
+      </div>
+    `);
+    document.getElementById('mCancel').addEventListener('click', closeOverlay);
+    document.getElementById('mConfirm').addEventListener('click', () => { closeOverlay(); performExport(); });
+  }
+
+  async function performExport(){
+    if(!config.webAppUrl){
+      btnExport.textContent = 'Ingen backend kopplad ännu';
+      setTimeout(() => { btnExport.textContent = 'Exportera'; updateExportUi(); }, 2500);
+      return;
+    }
+    btnExport.disabled = true;
+    btnExport.textContent = 'Skickar…';
+    try{
+      // Self-describing payload: each entry carries its own exercise/machine name rather
+      // than relying on array position matching Code.gs's own copy of the exercise list —
+      // that coupling would silently misattribute data the day either list gets reordered.
+      const warmupPayload = warmupState.map((w, i) => ({ name: warmupExercises[i], duration: w.duration, time: w.time }));
+      const strengthPayload = sessionState.map((ex, i) => ({ name: exercises[i].name, exWeight: ex.exWeight, rpe: ex.rpe, note: ex.note, sets: ex.sets }));
+      const res = await fetch(config.webAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ passId: PASS_ID, warmup: warmupPayload, mobility: mobilityDone, strength: strengthPayload, secret: config.secret })
+      });
+      const data = await res.json();
+      if(data.success){
+        btnExport.textContent = `Klart! ${pendingCount()} sparade ✓`;
+        clearPendingSession();
+      } else {
+        btnExport.textContent = 'Fel: ' + (data.error || 'okänt');
+      }
+    } catch(err){
+      btnExport.textContent = 'Ingen anslutning — försök igen senare';
+    }
+    setTimeout(() => { btnExport.textContent = 'Exportera'; updateExportUi(); }, 2500);
+  }
+
+  // ================= SETTINGS =================
+  function openSettings(){
+    openOverlay(`
+      <h2>Inställningar</h2>
+      <a href="${config.sheetUrl || '#'}" target="_blank" rel="noopener" class="modal-link ${config.sheetUrl ? '' : 'disabled'}">📄 Öppna Google Sheet</a>
+      <a href="${config.ptPdfUrl || '#'}" target="_blank" rel="noopener" class="modal-link ${config.ptPdfUrl ? '' : 'disabled'}">📋 Öppna PT-schema (PDF)</a>
+      <hr class="modal-hr">
+      <div class="field"><label>Web App URL</label><input type="text" id="fUrl" value="${config.webAppUrl}" placeholder="https://script.google.com/macros/s/.../exec"></div>
+      <div class="field"><label>Delad nyckel (valfritt)</label><input type="text" id="fSecret" value="${config.secret}"></div>
+      <div class="field"><label>Länk till Google Sheet (valfritt)</label><input type="text" id="fSheetUrl" value="${config.sheetUrl}" placeholder="https://docs.google.com/spreadsheets/..."></div>
+      <div class="field"><label>Länk till PT-schema PDF (valfritt)</label><input type="text" id="fPdfUrl" value="${config.ptPdfUrl}" placeholder="https://..."></div>
+      <button class="modal-save" id="fSave">Spara</button>
+    `);
+    document.getElementById('fSave').addEventListener('click', () => {
+      const newUrl = document.getElementById('fUrl').value.trim();
+      config.webAppUrl = newUrl;
+      config.secret = document.getElementById('fSecret').value.trim();
+      config.sheetUrl = document.getElementById('fSheetUrl').value.trim();
+      config.ptPdfUrl = document.getElementById('fPdfUrl').value.trim();
+      // Only tracked as "the default" (auto-upgradeable later) if it matches what's
+      // actually baked into this file right now — a manually typed/custom URL keeps
+      // defaultAtSave at null so it's never silently overwritten by a future update.
+      config.defaultAtSave = (newUrl === DEFAULT_WEB_APP_URL) ? DEFAULT_WEB_APP_URL : null;
+      saveConfig();
+      closeOverlay();
+    });
+  }
+
+  // ---------- init ----------
+  renderWarmup();
+  renderMobilityList();
+  renderMobilityToggle();
+  selectExercise(0);
+  selectSection('warmup');
+  updateExportUi();
+  fetchLastSessions();
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
