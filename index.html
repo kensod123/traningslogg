@@ -238,6 +238,11 @@
     background:none; border:1px solid var(--stroke); color:var(--muted); font-size:16px;
     padding:9px 14px; border-radius:10px; cursor:pointer; flex:none;
   }
+  .btn-next{
+    width:100%; margin-top:16px; padding:14px; border-radius:12px; border:none;
+    background:var(--accent); color:#1a1408; font-family:'Space Grotesk',sans-serif; font-weight:700;
+    font-size:14px; cursor:pointer;
+  }
   .modal-link{
     display:block; width:100%; box-sizing:border-box; text-align:center; padding:12px; border-radius:11px;
     border:1.5px solid var(--stroke); background:var(--surface-2); color:var(--text); text-decoration:none;
@@ -334,6 +339,8 @@
         <div class="rpe-hint">1 = mycket lätt · 10 = max, inget kvar i tanken</div>
         <div class="rpe-scale" id="rpeScale"></div>
       </div>
+
+      <button class="btn-next" id="btnNext" style="display:none;" onclick="goToNextExercise()"></button>
 
       <div class="rest-note">Tryck på siffran för att välja reps för den omgången</div>
 
@@ -681,6 +688,7 @@
     renderNav();
     renderSets();
     renderRpe();
+    renderNextButton();
   }
 
   noteInput.addEventListener('input', () => { sessionState[currentEx].note = noteInput.value; updateExportUi(); });
@@ -720,7 +728,7 @@
       renderSets();
       renderNav();
       renderRpe();
-      maybeAdvance();
+      renderNextButton();
     });
   }
 
@@ -734,14 +742,23 @@
     });
   }
 
-  // After completing the current exercise's last set, auto-jump to the next
-  // unfinished exercise so you don't have to reach for the nav mid-workout.
-  function maybeAdvance(){
-    if(!isExDone(currentEx)) return;
+  // A "Nästa övning" button appears once the current exercise is fully done, instead of
+  // auto-jumping there — auto-advance used to fire the moment set 3's reps were picked,
+  // which cut you off before you could fill in RPE or a note. Now you decide when you're
+  // actually ready to move on.
+  function renderNextButton(){
+    const btnNext = document.getElementById('btnNext');
     const nextUnfinished = exercises.findIndex((_, i) => !isExDone(i));
-    if(nextUnfinished !== -1 && nextUnfinished !== currentEx){
-      setTimeout(() => selectExercise(nextUnfinished), 600);
+    if(isExDone(currentEx) && nextUnfinished !== -1 && nextUnfinished !== currentEx){
+      btnNext.style.display = '';
+      btnNext.textContent = 'Nästa: ' + exercises[nextUnfinished].short + ' →';
+    } else {
+      btnNext.style.display = 'none';
     }
+  }
+  function goToNextExercise(){
+    const nextUnfinished = exercises.findIndex((_, i) => !isExDone(i));
+    if(nextUnfinished !== -1) selectExercise(nextUnfinished);
   }
 
   // Starts a brand new pass — called after a successful export clears everything out.
