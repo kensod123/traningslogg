@@ -479,9 +479,10 @@
   // Just a convenience default, not protected like DEFAULT_WEB_APP_URL: wrong or missing
   // just means a dead link in ⚙, not a broken app. Correct it there if the repo name differs.
   const DEFAULT_PT_PDF_URL = 'https://kensod123.github.io/traningslogg/pt-schema.pdf';
+  const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1Qg8ZhrUWwu8302Be4iomkA5ZeFMEL4IyuLsYQk35LC8/edit?gid=694039626#gid=694039626';
 
   function loadConfig(){
-    const defaults = { webAppUrl: DEFAULT_WEB_APP_URL, secret: '', sheetUrl: '', ptPdfUrl: DEFAULT_PT_PDF_URL, defaultAtSave: DEFAULT_WEB_APP_URL };
+    const defaults = { webAppUrl: DEFAULT_WEB_APP_URL, secret: '', sheetUrl: DEFAULT_SHEET_URL, ptPdfUrl: DEFAULT_PT_PDF_URL, defaultAtSave: DEFAULT_WEB_APP_URL };
     try {
       const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null');
       if (!saved) return defaults;
