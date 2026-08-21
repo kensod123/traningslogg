@@ -41,11 +41,13 @@
 
   .section-toggle{
     display:flex; background:var(--surface); border:1px solid var(--stroke); border-radius:12px;
-    padding:4px; margin: 16px 0 18px; gap:4px;
+    padding:4px; margin: 16px 0 18px; gap:3px; overflow-x:auto; scrollbar-width:none;
   }
+  .section-toggle::-webkit-scrollbar{ display:none; }
   .section-toggle button{
-    flex:1; padding:10px 6px; border:none; border-radius:9px; background:transparent; color:var(--muted);
-    font-family:'Inter',sans-serif; font-weight:600; font-size:12px; cursor:pointer; transition: all .15s ease;
+    flex:1 0 auto; padding:10px 8px; border:none; border-radius:9px; background:transparent; color:var(--muted);
+    font-family:'Inter',sans-serif; font-weight:600; font-size:11px; cursor:pointer; transition: all .15s ease;
+    white-space:nowrap;
   }
   .section-toggle button.active{ background:var(--accent); color:#1a1408; }
 
@@ -274,6 +276,25 @@
   }
   .pending-item button:active{ border-color:#e0645f; color:#e0645f; }
   .pending-empty{ text-align:center; color:var(--muted); padding:20px 0; font-size:13px; }
+
+  .weight-input-wrap{
+    display:flex; align-items:baseline; justify-content:center; gap:8px; margin: 10px 0 4px;
+  }
+  .weight-input{
+    width:170px; background:transparent; border:none; outline:none; text-align:right;
+    font-family:'Space Grotesk',sans-serif; font-size:48px; font-weight:700; color:var(--text);
+  }
+  .weight-input::-webkit-outer-spin-button, .weight-input::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+  .weight-input::placeholder{ color:var(--muted); }
+  .weight-input-unit{ font-family:'JetBrains Mono',monospace; font-size:14px; color:var(--muted); }
+  .bmi-readout{ text-align:center; font-family:'JetBrains Mono',monospace; font-size:12.5px; color:var(--muted); min-height:18px; margin-bottom:18px; }
+  .bmi-readout strong{ color:var(--text); }
+  .weight-list{ margin-top:16px; }
+  .weight-item{
+    display:flex; align-items:center; justify-content:space-between; padding:10px 0;
+    border-bottom:1px solid var(--stroke); font-size:13px;
+  }
+  .weight-item:last-child{ border-bottom:none; }
 </style>
 </head>
 <body>
@@ -282,13 +303,15 @@
   <header>
     <div class="eyebrow" id="passLabel">Prototyp · pass —</div>
     <h1>Träningslogg</h1>
-    <div class="sub">PT-schema · Uppvärmning, rörlighet och styrka i ett pass.</div>
+    <div class="sub">PT-schema · Uppvärmning, rörlighet, styrka, kondition och vikt.</div>
   </header>
 
   <div class="section-toggle" id="sectionToggle">
     <button data-sec="warmup">Uppvärmning</button>
     <button data-sec="mobility">Rörlighet</button>
     <button data-sec="strength">Styrka</button>
+    <button data-sec="cardio">Kondition</button>
+    <button data-sec="weight">Vikt</button>
   </div>
 
   <!-- ===================== WARM-UP ===================== -->
@@ -308,6 +331,25 @@
         <button data-val="Ja">Gjord ✓</button>
         <button data-val="Nej">Hoppade över</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ===================== WEIGHT ===================== -->
+  <div id="panelWeight" style="display:none;">
+    <div class="card">
+      <div class="ex-name">Vikt</div>
+      <div class="ex-meta">Väg dig när det passar — loggas fristående, inte kopplat till ett träningspass.</div>
+      <div class="last-time" id="lastWeightTime"></div>
+
+      <div class="weight-input-wrap">
+        <input type="number" id="weightInput" class="weight-input" inputmode="decimal" step="0.1" placeholder="0.0">
+        <span class="weight-input-unit">KG</span>
+      </div>
+      <div class="bmi-readout" id="bmiReadout"></div>
+
+      <button class="modal-save" id="btnLogWeight" onclick="logWeight()">Logga vikt</button>
+
+      <div class="weight-list" id="weightList"></div>
     </div>
   </div>
 
@@ -357,6 +399,13 @@
         <div class="pt-note" id="ptNote" style="display:none;"></div>
       </div>
     </div>
+  </div>
+
+  <!-- ===================== CARDIO (standalone cardio session) ===================== -->
+  <div id="panelCardio" style="display:none;">
+    <div class="ex-progress" id="cardioProgress"></div>
+    <div id="cardioList"></div>
+    <div class="rest-note">Tryck en maskin för att logga ett helt konditionspass (inte kopplat till uppvärmning/styrka).</div>
   </div>
 
   <footer>
@@ -410,10 +459,12 @@
     const w = (saved.warmup || []).some(s => s && s.duration !== null && s.duration !== undefined);
     const m = saved.mobility !== null && saved.mobility !== undefined;
     const s = (saved.strength || []).some(ex => ex && ex.sets && ex.sets.some(set => set && set.reps !== null && set.reps !== undefined));
-    return w || m || s;
+    const c = (saved.cardio || []).some(s => s && s.duration !== null && s.duration !== undefined);
+    const wt = Array.isArray(saved.weight) && saved.weight.length > 0;
+    return w || m || s || c || wt;
   }
   function savePending(){
-    try { localStorage.setItem(PENDING_KEY, JSON.stringify({ passId: PASS_ID, warmup: warmupState, mobility: mobilityDone, strength: sessionState })); }
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify({ passId: PASS_ID, warmup: warmupState, mobility: mobilityDone, strength: sessionState, cardio: cardioState, weight: weightEntries })); }
     catch(e){ /* private browsing / storage disabled — session just won't survive a reload */ }
   }
 
@@ -479,7 +530,7 @@
   sheetOverlay.addEventListener('click', (e) => { if(e.target === sheetOverlay){ closeSheet(); } });
 
   // ---------- Section switching ----------
-  const panels = { warmup: document.getElementById('panelWarmup'), mobility: document.getElementById('panelMobility'), strength: document.getElementById('panelStrength') };
+  const panels = { warmup: document.getElementById('panelWarmup'), mobility: document.getElementById('panelMobility'), strength: document.getElementById('panelStrength'), cardio: document.getElementById('panelCardio'), weight: document.getElementById('panelWeight') };
   const toggleBtns = document.querySelectorAll('#sectionToggle button');
   let currentSection = 'warmup';
   function selectSection(sec){
@@ -525,6 +576,46 @@
       warmupState[i].duration = val;
       warmupState[i].time = val === null ? null : nowTimeStr();
       renderWarmup();
+    });
+  }
+
+  // ================= CARDIO (standalone cardio session — same machines as warm-up) =================
+  // A dedicated cardio-only gym visit, not a 5-10 min pre-lift warm-up — kept as its own
+  // log (own Sheet tab, own state) so a real 30-60 min session doesn't mix with warm-up
+  // entries. DOES count as a real pass (unlike Vikt) — Code.gs gives it a Pass-summary row.
+  const cardioDurationOptions = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
+  let cardioState = (pendingHasData(savedPending) && Array.isArray(savedPending.cardio) && savedPending.cardio.length === warmupExercises.length)
+    ? savedPending.cardio
+    : warmupExercises.map(() => ({ duration: null, time: null }));
+
+  function renderCardio(){
+    const list = document.getElementById('cardioList');
+    list.innerHTML = '';
+    warmupExercises.forEach((name, i) => {
+      const s = cardioState[i];
+      const card = document.createElement('div');
+      card.className = 'wu-card' + (s.duration !== null ? ' done' : '');
+      card.innerHTML = `
+        <div>
+          <div class="wu-name">${name}</div>
+          <div class="wu-sub">${s.duration !== null ? '✓ ' + s.duration + ' min · ' + s.time : 'Valfri längd'}</div>
+        </div>
+        <button type="button" class="wu-action">${s.duration !== null ? 'Ändra' : 'Logga'}</button>
+      `;
+      card.querySelector('.wu-action').addEventListener('click', () => openCardioSheet(i));
+      list.appendChild(card);
+    });
+    const doneCount = cardioState.filter(s => s.duration !== null).length;
+    document.getElementById('cardioProgress').textContent = `${doneCount}/${warmupExercises.length} loggade`;
+    updateExportUi();
+  }
+
+  function openCardioSheet(i){
+    const opts = [{value: null, label: '—'}].concat(cardioDurationOptions.map(m => ({value: m, label: m + ' min'})));
+    openPickerSheet(warmupExercises[i] + ' · VÄLJ TID', opts, cardioState[i].duration, (val) => {
+      cardioState[i].duration = val;
+      cardioState[i].time = val === null ? null : nowTimeStr();
+      renderCardio();
     });
   }
 
@@ -584,9 +675,9 @@
     try{
       const res = await fetch(config.webAppUrl);
       const data = await res.json();
-      if(data.success && data.lastSessions){
-        lastSessions = data.lastSessions;
-        renderLastTime();
+      if(data.success){
+        if(data.lastSessions){ lastSessions = data.lastSessions; renderLastTime(); }
+        if('lastWeight' in data){ lastWeight = data.lastWeight; renderLastWeight(); }
       }
     } catch(e){ /* offline or backend unreachable — keep whatever we already had */ }
   }
@@ -749,6 +840,68 @@
     });
   }
 
+  // ================= WEIGHT (bodyweight — standalone, no Pass-ID) =================
+  // Weigh-ins happen at home, sporadically, disconnected from a gym visit — deliberately
+  // NOT tied to PASS_ID/Styrka's session concept. Free-text number input rather than the
+  // exercise weight's ±stepper: bodyweight is a fresh reading off a scale each time, not a
+  // small delta from a known baseline, so typing the number is faster than tapping to it.
+  const HEIGHT_CM = 185; // fast värde — ändra här om det någonsin ändras
+  const HEIGHT_M = HEIGHT_CM / 100;
+
+  function todayDateStr(){
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+  function bmiFor(vikt){ return Math.round((vikt / (HEIGHT_M * HEIGHT_M)) * 10) / 10; }
+  function bmiCategory(bmi){
+    if(bmi < 18.5) return 'Undervikt';
+    if(bmi < 25) return 'Normalvikt';
+    if(bmi < 30) return 'Övervikt';
+    return 'Fetma';
+  }
+  function fmtBmi(bmi){ return Number(bmi).toLocaleString('sv-SE', {minimumFractionDigits: 1}); }
+
+  let weightEntries = (pendingHasData(savedPending) && Array.isArray(savedPending.weight)) ? savedPending.weight : [];
+  let lastWeight = null; // populated from doGet, like lastSessions
+
+  const weightInput = document.getElementById('weightInput');
+  const bmiReadoutEl = document.getElementById('bmiReadout');
+
+  weightInput.addEventListener('input', renderBmiPreview);
+  function renderBmiPreview(){
+    const v = parseFloat((weightInput.value || '').replace(',', '.'));
+    if(!v || v <= 0){ bmiReadoutEl.textContent = ''; return; }
+    const bmi = bmiFor(v);
+    bmiReadoutEl.innerHTML = `BMI <strong>${fmtBmi(bmi)}</strong> · ${bmiCategory(bmi)} · längd ${HEIGHT_CM} cm`;
+  }
+
+  function logWeight(){
+    const v = parseFloat((weightInput.value || '').replace(',', '.'));
+    if(!v || v <= 0) return;
+    weightEntries.push({ vikt: v, bmi: bmiFor(v), datum: todayDateStr(), tid: nowTimeStr() });
+    weightInput.value = '';
+    bmiReadoutEl.textContent = '';
+    renderWeightList();
+    updateExportUi();
+  }
+
+  function renderWeightList(){
+    const list = document.getElementById('weightList');
+    list.innerHTML = [...weightEntries].reverse().map(w => `
+      <div class="weight-item">
+        <span>${fmt(w.vikt)} kg · BMI ${fmtBmi(w.bmi)}</span>
+        <span class="pi-sub">${w.datum} · ${w.tid}</span>
+      </div>
+    `).join('');
+  }
+
+  function renderLastWeight(){
+    const el = document.getElementById('lastWeightTime');
+    if(!lastWeight){ el.innerHTML = 'Ingen tidigare vikt loggad'; return; }
+    const bmi = (lastWeight.bmi !== null && lastWeight.bmi !== undefined && lastWeight.bmi !== '') ? Number(lastWeight.bmi) : bmiFor(lastWeight.vikt);
+    el.innerHTML = `Senast loggad: <strong>${fmt(lastWeight.vikt)} kg</strong> · BMI ${fmtBmi(bmi)} · ${lastWeight.datum}`;
+  }
+
   // Starts a brand new pass — called after a successful export clears everything out.
   // Not user-facing as a button: an unconfirmed full-wipe control is too dangerous once
   // real, unexported data is on the line (production Fiskelog doesn't have one either).
@@ -758,6 +911,10 @@
     warmupState = warmupExercises.map(() => ({ duration: null, time: null }));
     mobilityDone = null;
     sessionState = freshState();
+    cardioState = warmupExercises.map(() => ({ duration: null, time: null }));
+    weightEntries = [];
+    renderWeightList();
+    renderCardio();
     renderWarmup();
     renderMobilityToggle();
     selectExercise(0);
@@ -784,7 +941,8 @@
     const warmupCount = warmupState.filter(s => s.duration !== null).length;
     const mobilityCount = mobilityDone !== null ? 1 : 0;
     const strengthCount = sessionState.reduce((sum, ex) => sum + ex.sets.filter(s => s.reps !== null).length, 0);
-    return warmupCount + mobilityCount + strengthCount;
+    const cardioCount = cardioState.filter(s => s.duration !== null).length;
+    return warmupCount + mobilityCount + strengthCount + cardioCount + weightEntries.length;
   }
 
   function updateExportUi(){
@@ -823,10 +981,11 @@
       // that coupling would silently misattribute data the day either list gets reordered.
       const warmupPayload = warmupState.map((w, i) => ({ name: warmupExercises[i], duration: w.duration, time: w.time }));
       const strengthPayload = sessionState.map((ex, i) => ({ name: exercises[i].name, exWeight: ex.exWeight, rpe: ex.rpe, note: ex.note, sets: ex.sets }));
+      const cardioPayload = cardioState.map((c, i) => ({ name: warmupExercises[i], duration: c.duration, time: c.time }));
       const res = await fetch(config.webAppUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ passId: PASS_ID, warmup: warmupPayload, mobility: mobilityDone, strength: strengthPayload, secret: config.secret })
+        body: JSON.stringify({ passId: PASS_ID, warmup: warmupPayload, mobility: mobilityDone, strength: strengthPayload, cardio: cardioPayload, weight: weightEntries, secret: config.secret })
       });
       const data = await res.json();
       if(data.success){
@@ -874,6 +1033,22 @@
       });
     });
 
+    warmupExercises.forEach((name, i) => {
+      const c = cardioState[i];
+      if(c.duration === null) return;
+      rows.push(`<div class="pending-item">
+        <div><div class="pi-main">${name}</div><div class="pi-sub">Kondition · ${c.duration} min${c.time ? ' · ' + c.time : ''}</div></div>
+        <button data-del="cardio" data-idx="${i}">✕</button>
+      </div>`);
+    });
+
+    weightEntries.forEach((w, idx) => {
+      rows.push(`<div class="pending-item">
+        <div><div class="pi-main">Vikt</div><div class="pi-sub">${fmt(w.vikt)} kg · BMI ${fmtBmi(w.bmi)} · ${w.datum} ${w.tid}</div></div>
+        <button data-del="weight" data-idx="${idx}">✕</button>
+      </div>`);
+    });
+
     openOverlay(`
       <h2>Ej exporterat (${pendingCount()})</h2>
       <div class="pending-list">${rows.join('') || '<div class="pending-empty">Inget ej exporterat</div>'}</div>
@@ -904,6 +1079,12 @@
             noteInput.value = sessionState[currentEx].note;
           }
           renderNav();
+        } else if(type === 'cardio'){
+          cardioState[Number(btn.dataset.idx)] = { duration: null, time: null };
+          renderCardio();
+        } else if(type === 'weight'){
+          weightEntries.splice(Number(btn.dataset.idx), 1);
+          renderWeightList();
         }
         updateExportUi();
         openLog(); // refresh the list in place
@@ -941,8 +1122,11 @@
 
   // ---------- init ----------
   renderWarmup();
+  renderCardio();
   renderMobilityList();
   renderMobilityToggle();
+  renderWeightList();
+  renderLastWeight();
   selectExercise(0);
   selectSection('warmup');
   updateExportUi();
