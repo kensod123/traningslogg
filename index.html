@@ -222,6 +222,10 @@
   .pg-debug-head{ display:flex; align-items:center; justify-content:space-between; font-weight:700; color:#e0645f; margin-bottom:4px; }
   .pg-debug-head button{ background:none; border:none; color:#e0645f; font-size:13px; cursor:pointer; padding:2px 6px; }
   .pg-debug-lines div{ word-break:break-word; margin-top:4px; }
+  .pg-test-btn{
+    width:100%; margin-top:8px; padding:10px; border-radius:10px; border:1.5px dashed #e0645f;
+    background:rgba(224,100,95,0.08); color:#e0645f; font-family:'JetBrains Mono',monospace; font-size:11px; cursor:pointer;
+  }
   .pending{ text-align:center; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--muted); margin-bottom:10px; }
   .pending b{ color:var(--text); }
   .footer-row{ display:flex; gap:8px; }
@@ -432,6 +436,10 @@
       <button class="btn-export" id="btnExport" disabled onclick="openExportConfirm()">Exportera</button>
       <button class="btn-settings" onclick="openSettings()">⚙</button>
     </div>
+    <!-- TEMPORARY DEBUG (2026-08-29) — isolates whether a bare, fully-awaited fetch to
+         PG_BASE_URL/vikt gets ANY response at all, independent of the Sheet export flow
+         and the fire-and-forget dual-write path. Remove with the rest of this block. -->
+    <button type="button" class="pg-test-btn" onclick="tempPgTestFetch()">🧪 Testa Postgres-anrop (tillfälligt)</button>
   </footer>
 </div>
 
@@ -1111,6 +1119,31 @@
     } catch(err){
       console.warn('[Postgres dual-write] ' + path + ' unreachable (offline or not on the tailnet?):', err);
       showPgDebug(path + ' ONÅBAR: ' + (err && err.message ? err.message : String(err))); // TEMP DEBUG
+    }
+  }
+
+  // TEMPORARY DEBUG (2026-08-29, Homelab's request) — isolates whether a bare,
+  // fully-awaited fetch to PG_BASE_URL/vikt gets ANY response at all from this real
+  // device right now, completely independent of the Sheet export flow, the
+  // fire-and-forget dual-write path, and its own Promise.allSettled fix. One
+  // hardcoded minimal row, no Sheet write, no race, no custom banner UI — just a
+  // plain awaited fetch and a plain alert() with the raw result.
+  // REMOVE this function + its button + its CSS once the real cause is confirmed fixed.
+  async function tempPgTestFetch(){
+    try{
+      const res = await fetch(PG_BASE_URL + '/vikt', {
+        method: 'POST',
+        headers: {
+          'Content-Profile': 'gym',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + PG_JWT
+        },
+        body: JSON.stringify([{ datum: '2026-01-01', tid: '00:00:00', vikt_kg: 1 }])
+      });
+      const body = await res.text().catch(()=>'');
+      alert('Status: ' + res.status + (body ? '\n' + body : ''));
+    } catch(err){
+      alert('FEL: ' + (err && err.message ? err.message : String(err)));
     }
   }
 
