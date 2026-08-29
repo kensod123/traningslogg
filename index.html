@@ -210,22 +210,6 @@
   .mob-toggle button.selected-no{ border-color:#e0645f; color:#e0645f; background:rgba(224,100,95,0.08); }
 
   footer{ margin-top: 22px; }
-  /* TEMPORARY DEBUG (2026-08-29) — visible Postgres dual-write error box, added at
-     Homelab's request while diagnosing why real-phone writes weren't landing despite
-     server-side curl tests succeeding: console.warn alone isn't visible on a phone.
-     REMOVE this whole block (CSS + HTML + JS) once the real cause is found and fixed. */
-  .pg-debug{
-    background:rgba(224,100,95,0.1); border:1px solid #e0645f; border-radius:12px;
-    padding:10px 12px; margin-bottom:10px; font-family:'JetBrains Mono',monospace; font-size:11px;
-    line-height:1.5; color:#f0a8a4;
-  }
-  .pg-debug-head{ display:flex; align-items:center; justify-content:space-between; font-weight:700; color:#e0645f; margin-bottom:4px; }
-  .pg-debug-head button{ background:none; border:none; color:#e0645f; font-size:13px; cursor:pointer; padding:2px 6px; }
-  .pg-debug-lines div{ word-break:break-word; margin-top:4px; }
-  .pg-test-btn{
-    width:100%; margin-top:8px; padding:10px; border-radius:10px; border:1.5px dashed #e0645f;
-    background:rgba(224,100,95,0.08); color:#e0645f; font-family:'JetBrains Mono',monospace; font-size:11px; cursor:pointer;
-  }
   .pending{ text-align:center; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--muted); margin-bottom:10px; }
   .pending b{ color:var(--text); }
   .footer-row{ display:flex; gap:8px; }
@@ -425,21 +409,12 @@
   </div>
 
   <footer>
-    <!-- TEMPORARY DEBUG (2026-08-29) — see CSS comment above. Remove with the rest. -->
-    <div class="pg-debug" id="pgDebugBox" style="display:none;">
-      <div class="pg-debug-head"><span>⚠ Postgres-debug (tillfälligt)</span><button type="button" onclick="clearPgDebug()">✕</button></div>
-      <div class="pg-debug-lines" id="pgDebugLines"></div>
-    </div>
     <div class="pending" id="pendingLabel"><b id="pendingCount">0</b> ej exporterat</div>
     <div class="footer-row">
       <button class="btn-settings" onclick="openLog()">☰</button>
       <button class="btn-export" id="btnExport" disabled onclick="openExportConfirm()">Exportera</button>
       <button class="btn-settings" onclick="openSettings()">⚙</button>
     </div>
-    <!-- TEMPORARY DEBUG (2026-08-29) — isolates whether a bare, fully-awaited fetch to
-         PG_BASE_URL/vikt gets ANY response at all, independent of the Sheet export flow
-         and the fire-and-forget dual-write path. Remove with the rest of this block. -->
-    <button type="button" class="pg-test-btn" onclick="tempPgTestFetch()">🧪 Testa Postgres-anrop (tillfälligt)</button>
   </footer>
 </div>
 
@@ -1068,31 +1043,14 @@
     return (entries || []).map(w => ({ datum: w.datum, tid: w.tid || null, vikt_kg: w.vikt }));
   }
 
-  // TEMPORARY DEBUG (2026-08-29) — see CSS comment near .pg-debug for why.
-  // Appends a line rather than replacing, so all endpoint failures from one
-  // export attempt are visible together. REMOVE with the rest of this block.
-  const pgDebugBox = document.getElementById('pgDebugBox');
-  const pgDebugLines = document.getElementById('pgDebugLines');
-  function showPgDebug(msg){
-    pgDebugBox.style.display = '';
-    const line = document.createElement('div');
-    line.textContent = msg;
-    pgDebugLines.appendChild(line);
-  }
-  function clearPgDebug(){
-    pgDebugLines.innerHTML = '';
-    pgDebugBox.style.display = 'none';
-  }
-
   // One bulk-insert POST to a PostgREST endpoint. Best-effort and self-
   // contained: NEVER throws, so a caller can fire this without awaiting it
   // and it can never affect the Sheet export's own success/failure path.
-  // Distinguishes, via console.warn (+ showPgDebug() while that's active —
-  // see above), "couldn't reach the server at all" (offline/not on the
-  // tailnet/server down — expected, nothing to act on) from "server
-  // rejected this data" (a real signal: a CHECK/FK constraint failed,
-  // meaning this app's value lists and the gym schema's reference data
-  // have drifted apart).
+  // Distinguishes, via console.warn, "couldn't reach the server at all"
+  // (offline/not on the tailnet/server down — expected, nothing to act on)
+  // from "server rejected this data" (a real signal: a CHECK/FK constraint
+  // failed, meaning this app's value lists and the gym schema's reference
+  // data have drifted apart).
   async function postgresWrite(path, rowsArr){
     if(!rowsArr.length) return;
     try{
@@ -1112,38 +1070,9 @@
       if(!res.ok){
         const body = await res.text().catch(()=>'');
         console.warn('[Postgres dual-write] ' + path + ' rejected (' + res.status + '): ' + body);
-        showPgDebug(path + ' AVVISAD (' + res.status + '): ' + (body || '(tomt svar)')); // TEMP DEBUG
-      } else {
-        showPgDebug(path + ' OK (' + res.status + '), ' + rowsArr.length + ' rad(er)'); // TEMP DEBUG
       }
     } catch(err){
       console.warn('[Postgres dual-write] ' + path + ' unreachable (offline or not on the tailnet?):', err);
-      showPgDebug(path + ' ONÅBAR: ' + (err && err.message ? err.message : String(err))); // TEMP DEBUG
-    }
-  }
-
-  // TEMPORARY DEBUG (2026-08-29, Homelab's request) — isolates whether a bare,
-  // fully-awaited fetch to PG_BASE_URL/vikt gets ANY response at all from this real
-  // device right now, completely independent of the Sheet export flow, the
-  // fire-and-forget dual-write path, and its own Promise.allSettled fix. One
-  // hardcoded minimal row, no Sheet write, no race, no custom banner UI — just a
-  // plain awaited fetch and a plain alert() with the raw result.
-  // REMOVE this function + its button + its CSS once the real cause is confirmed fixed.
-  async function tempPgTestFetch(){
-    try{
-      const res = await fetch(PG_BASE_URL + '/vikt', {
-        method: 'POST',
-        headers: {
-          'Content-Profile': 'gym',
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + PG_JWT
-        },
-        body: JSON.stringify([{ datum: '2026-01-01', tid: '00:00:00', vikt_kg: 1 }])
-      });
-      const body = await res.text().catch(()=>'');
-      alert('Status: ' + res.status + (body ? '\n' + body : ''));
-    } catch(err){
-      alert('FEL: ' + (err && err.message ? err.message : String(err)));
     }
   }
 
@@ -1168,7 +1097,6 @@
       // never throws, so this can't delay or break the Sheet write even
       // on total failure. The promises ARE collected (pgWrites), though —
       // see the Promise.allSettled() near the end of this function for why.
-      clearPgDebug(); // TEMP DEBUG — clear previous attempt's lines before this one
       const pgDatum = pgDateFromPassId(PASS_ID);
       const pgWrites = [
         postgresWrite('/styrka_sets', buildStyrkaRows(PASS_ID, pgDatum, strengthPayload)),
@@ -1190,17 +1118,16 @@
       } else {
         btnExport.textContent = 'Fel: ' + (data.error || 'okänt');
       }
-      // TEMP DEBUG (2026-08-29, Homelab's hypothesis): the Sheet export's own
-      // success message above already appears immediately, unaffected — but this
-      // function returning right after firing the Postgres writes without ever
-      // waiting on them meant nothing kept those in-flight fetch()es alive. If the
-      // tab gets backgrounded/suspended (e.g. the phone locks right after tapping
-      // Exportera — a very plausible real habit right after finishing a workout)
-      // before they resolve, they can be abandoned before EVER reaching
-      // postgresWrite()'s own success/rejected/unreachable branches — a genuine
-      // silent no-op, not a real success or a real rejection. Awaiting here (still
-      // AFTER the user already saw "Klart!") gives them a real chance to finish
-      // and show up in the debug box while the tab is still definitely alive.
+      // Wait for the Postgres writes to actually settle before this function
+      // returns — the Sheet export's own success message above already appeared
+      // immediately, unaffected. Without this, a real bug surfaced during rollout
+      // (2026-08-29): the function returning right after firing the writes, with
+      // nothing ever awaiting them, meant an in-flight fetch() could be silently
+      // abandoned if the tab got backgrounded (e.g. the phone locks right after
+      // tapping Exportera — a very plausible habit right after finishing a
+      // workout) before it resolved either way. Awaiting here (still AFTER the
+      // user already sees "Klart!") gives every write a real chance to finish
+      // while the tab is still definitely alive.
       await Promise.allSettled(pgWrites);
     } catch(err){
       btnExport.textContent = 'Ingen anslutning — försök igen senare';
