@@ -489,7 +489,13 @@
   // purely best-effort (see postgresWrite() below) and never blocks or
   // fails the Sheet export if it errors. Requires this phone to be joined
   // to the same Tailscale network as the server.
-  const PG_BASE_URL = 'http://100.76.129.29:3000';
+  // HTTPS via `tailscale serve` (tailnet-only, valid cert, no public
+  // exposure) — NOT the raw http://<tailscale-ip>:3000 form used earlier,
+  // which a real live test proved unusable: GitHub Pages serves this app
+  // over HTTPS, and browsers unconditionally block a plain-HTTP fetch from
+  // an HTTPS page (Mixed Content), regardless of whether the target is
+  // actually reachable. See README changelog 2026-08-29 for the full story.
+  const PG_BASE_URL = 'https://homeserver.tailffb774.ts.net';
   // Static, non-expiring JWT for the insert-only `gym_writer` Postgres role
   // (no SELECT/UPDATE/DELETE anywhere). Safe to embed here by design — see
   // Homelab's README.md "Gym data" section.
