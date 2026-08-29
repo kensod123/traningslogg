@@ -481,6 +481,20 @@
   const DEFAULT_PT_PDF_URL = 'https://kensod123.github.io/traningslogg/pt-schema.pdf';
   const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1Qg8ZhrUWwu8302Be4iomkA5ZeFMEL4IyuLsYQk35LC8/edit?gid=694039626#gid=694039626';
 
+  // ---------- Postgres dual-write (beta) ----------
+  // Alongside the Sheet export below, also POST straight to Postgres via
+  // PostgREST, over Tailscale — same pattern as Fiskelog's dual-write beta
+  // (see that project's CLAUDE.md "Related project: the Homelab server").
+  // Parallel-run: the Sheet stays the system of record, this write is
+  // purely best-effort (see postgresWrite() below) and never blocks or
+  // fails the Sheet export if it errors. Requires this phone to be joined
+  // to the same Tailscale network as the server.
+  const PG_BASE_URL = 'http://100.76.129.29:3000';
+  // Static, non-expiring JWT for the insert-only `gym_writer` Postgres role
+  // (no SELECT/UPDATE/DELETE anywhere). Safe to embed here by design — see
+  // Homelab's README.md "Gym data" section.
+  const PG_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiZ3ltX3dyaXRlciJ9.WSn46z4fOCXzIDZ6mhjCNjNX0zH7MASYv3ZgnkBOMx4';
+
   function loadConfig(){
     const defaults = { webAppUrl: DEFAULT_WEB_APP_URL, secret: '', sheetUrl: DEFAULT_SHEET_URL, ptPdfUrl: DEFAULT_PT_PDF_URL, defaultAtSave: DEFAULT_WEB_APP_URL };
     try {
@@ -543,7 +557,7 @@
   toggleBtns.forEach(b => b.addEventListener('click', () => selectSection(b.dataset.sec)));
 
   // ================= WARM-UP =================
-  const warmupExercises = ['Assault Bike', 'Gåband / Elevated', 'Crosstrainer', 'Stakmaskin/Ski ERG', 'Roddmaskin'];
+  const warmupExercises = ['Assault Bike', 'Stationär cykel', 'Gåband / Elevated', 'Crosstrainer', 'Stakmaskin/Ski ERG', 'Roddmaskin'];
   const durationOptions = Array.from({length:15}, (_, i) => 15 - i); // 15 down to 1 min
   let warmupState = (pendingHasData(savedPending) && Array.isArray(savedPending.warmup) && savedPending.warmup.length === warmupExercises.length)
     ? savedPending.warmup
@@ -968,6 +982,94 @@
     document.getElementById('mConfirm').addEventListener('click', () => { closeOverlay(); performExport(); });
   }
 
+  // ---------- Postgres dual-write helpers ----------
+  // Mirrors Code.gs's own row-building logic exactly (same skip rules, same
+  // "RPE/note goes on the last valid set, not always set 3" behavior) so
+  // the two destinations never silently disagree on what counts as a
+  // loggable set/entry.
+
+  // passId format is "P" + YYYYMMDD (see todayPassId()) — parsed the same
+  // way Code.gs's parseDateFromPassId() derives the session date, since the
+  // top-level export payload never sends a separate "datum" field.
+  function pgDateFromPassId(passId){
+    const digits = String(passId).replace(/^P/, '');
+    return digits.slice(0,4) + '-' + digits.slice(4,6) + '-' + digits.slice(6,8);
+  }
+
+  function buildStyrkaRows(passId, datum, strengthArr){
+    const rows = [];
+    strengthArr.forEach(ex => {
+      const setRows = [];
+      (ex.sets || []).forEach((s, i) => {
+        if(s.reps === null || s.reps === undefined) return;
+        setRows.push({ setNum: i+1, reps: s.reps, weight: s.weight, time: s.time });
+      });
+      if(!setRows.length) return;
+      const lastSetRow = setRows[setRows.length - 1];
+      setRows.forEach(s => {
+        rows.push({
+          pass_id: passId, datum, tid: s.time || null, ovning: ex.name,
+          set_num: s.setNum, vikt_kg: s.weight, reps: s.reps,
+          rpe: (s === lastSetRow) ? (ex.rpe ?? null) : null,
+          anteckning: (s === lastSetRow) ? (ex.note || null) : null
+        });
+      });
+    });
+    return rows;
+  }
+
+  // Shared by Uppvärmning and Kondition — identical shape, same skip rule
+  // (an entry with no duration was never actually logged on that machine).
+  function buildMachineRows(passId, datum, arr){
+    return (arr || [])
+      .filter(w => w.duration !== null && w.duration !== undefined)
+      .map(w => ({ pass_id: passId, datum, tid: w.time || null, ovning: w.name, tid_min: w.duration }));
+  }
+
+  function buildRorlighetRows(passId, datum, mobility){
+    if(mobility !== 'Ja' && mobility !== 'Nej') return [];
+    return [{ pass_id: passId, datum, gjord: mobility }];
+  }
+
+  // Weight entries already carry their own datum/tid (standalone home
+  // weigh-ins, no pass_id by design — see gym.vikt's table comment).
+  function buildViktRows(entries){
+    return (entries || []).map(w => ({ datum: w.datum, tid: w.tid || null, vikt_kg: w.vikt }));
+  }
+
+  // One bulk-insert POST to a PostgREST endpoint. Best-effort and self-
+  // contained: NEVER throws, so a caller can fire this without awaiting it
+  // and it can never affect the Sheet export's own success/failure path.
+  // Distinguishes, via console.warn, "couldn't reach the server at all"
+  // (offline/not on the tailnet/server down — expected, nothing to act on)
+  // from "server rejected this data" (a real signal: a CHECK/FK constraint
+  // failed, meaning this app's value lists and the gym schema's reference
+  // data have drifted apart).
+  async function postgresWrite(path, rowsArr){
+    if(!rowsArr.length) return;
+    try{
+      const res = await fetch(PG_BASE_URL + path, {
+        method: 'POST',
+        headers: {
+          'Content-Profile': 'gym',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + PG_JWT
+          // Deliberately NO "Prefer: return=representation" — gym_writer
+          // has no SELECT at all, and PostgREST's INSERT...RETURNING needs
+          // SELECT even for your own just-inserted row. A plain 201 with
+          // an empty body is success.
+        },
+        body: JSON.stringify(rowsArr)
+      });
+      if(!res.ok){
+        const body = await res.text().catch(()=>'');
+        console.warn('[Postgres dual-write] ' + path + ' rejected (' + res.status + '): ' + body);
+      }
+    } catch(err){
+      console.warn('[Postgres dual-write] ' + path + ' unreachable (offline or not on the tailnet?):', err);
+    }
+  }
+
   async function performExport(){
     if(!config.webAppUrl){
       btnExport.textContent = 'Ingen backend kopplad ännu';
@@ -983,6 +1085,18 @@
       const warmupPayload = warmupState.map((w, i) => ({ name: warmupExercises[i], duration: w.duration, time: w.time }));
       const strengthPayload = sessionState.map((ex, i) => ({ name: exercises[i].name, exWeight: ex.exWeight, rpe: ex.rpe, note: ex.note, sets: ex.sets }));
       const cardioPayload = cardioState.map((c, i) => ({ name: warmupExercises[i], duration: c.duration, time: c.time }));
+
+      // Dual-write beta: fired in parallel, never awaited as part of the
+      // Sheet export's own success/failure path below — postgresWrite()
+      // never throws, so this can't delay or break the Sheet write even
+      // on total failure.
+      const pgDatum = pgDateFromPassId(PASS_ID);
+      postgresWrite('/styrka_sets', buildStyrkaRows(PASS_ID, pgDatum, strengthPayload));
+      postgresWrite('/uppvarmning', buildMachineRows(PASS_ID, pgDatum, warmupPayload));
+      postgresWrite('/kondition', buildMachineRows(PASS_ID, pgDatum, cardioPayload));
+      postgresWrite('/rorlighet', buildRorlighetRows(PASS_ID, pgDatum, mobilityDone));
+      postgresWrite('/vikt', buildViktRows(weightEntries));
+
       const res = await fetch(config.webAppUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
