@@ -499,7 +499,7 @@
   // Static, non-expiring JWT for the insert-only `gym_writer` Postgres role
   // (no SELECT/UPDATE/DELETE anywhere). Safe to embed here by design — see
   // Homelab's README.md "Gym data" section.
-  const PG_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiZ3ltX3dyaXRlciJ9.WSn46z4fOCXzIDZ6mhjCNjNX0zH7MASYv3ZgnkBOMx4';
+  const PG_JWT = 'eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJyb2xlIjogImd5bV93cml0ZXIifQ.ygOAIPTJ7T70ivriVB7-UA7izJs-PIIPAPVQx21hgN0';
 
   function loadConfig(){
     const defaults = { webAppUrl: DEFAULT_WEB_APP_URL, secret: '', sheetUrl: DEFAULT_SHEET_URL, ptPdfUrl: DEFAULT_PT_PDF_URL, defaultAtSave: DEFAULT_WEB_APP_URL };
