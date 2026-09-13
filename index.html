@@ -295,6 +295,42 @@
     border-bottom:1px solid var(--stroke); font-size:13px;
   }
   .weight-item:last-child{ border-bottom:none; }
+
+  /* ---------- Dashboard (2026-09-13) ----------
+     In-app stats view reading straight from Postgres (gym_reader) — mirrors Fiskelog's
+     "NappNytt" dashboard: hand-rolled cards/tables/SVG, no chart library, reuses this
+     app's own --tokens rather than a separate palette. Prefixed dash- throughout so
+     nothing here collides with the logging screens' existing classes. */
+  .dash-nav{ display:flex; background:var(--surface-2); border:1px solid var(--stroke); border-radius:12px; padding:4px; margin-bottom:14px; gap:3px; }
+  .dash-nav button{ flex:1; background:transparent; border:none; border-radius:9px; padding:9px 4px; color:var(--muted); font-family:'JetBrains Mono',monospace; font-weight:600; font-size:10px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; }
+  .dash-nav button.active{ background:var(--accent); color:#1a1408; }
+  .dash-kpi-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:6px; }
+  .dash-kpi{ background:var(--surface-2); border:1px solid var(--stroke); border-radius:12px; padding:10px 12px; }
+  .dash-kpi-label{ font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); margin-bottom:4px; }
+  .dash-kpi-value{ font-family:'Space Grotesk',sans-serif; font-size:19px; font-weight:700; line-height:1.1; }
+  .dash-kpi-sub{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); margin-top:2px; }
+  .dash-section-title{ font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); margin:16px 0 8px; }
+  .dash-table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .dash-table{ width:100%; border-collapse:collapse; font-size:11.5px; }
+  .dash-table th{ text-align:left; color:var(--accent); font-family:'JetBrains Mono',monospace; font-weight:600; font-size:9px; letter-spacing:.04em; text-transform:uppercase; padding:6px 8px; border-bottom:1px solid var(--stroke); white-space:nowrap; }
+  .dash-table td{ padding:6px 8px; border-bottom:1px solid var(--stroke); white-space:nowrap; font-family:'JetBrains Mono',monospace; }
+  .dash-table tr:last-child td{ border-bottom:none; }
+  .dash-oka-yes{ color:var(--ok); font-weight:600; }
+  .dash-oka-no{ color:var(--muted); }
+  .dash-hbars{ display:flex; flex-direction:column; gap:8px; }
+  .dash-hbar-row{ display:flex; align-items:center; gap:8px; }
+  .dash-hbar-label{ width:78px; flex:none; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dash-hbar-track{ flex:1; height:14px; background:var(--surface); border-radius:3px; overflow:hidden; }
+  .dash-hbar-fill{ height:100%; background:var(--accent); border-radius:3px 0 0 3px; }
+  .dash-hbar-value{ width:30px; flex:none; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); text-align:right; }
+  .dash-chart-card{ background:var(--surface-2); border:1px solid var(--stroke); border-radius:12px; padding:10px; margin-bottom:12px; }
+  .dash-chart-title{ font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--muted); margin-bottom:6px; }
+  .dash-legend{ display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:8px; justify-content:center; }
+  .dash-legend-item{ display:flex; align-items:center; gap:5px; font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--muted); }
+  .dash-legend-swatch{ width:8px; height:8px; border-radius:2px; flex:none; }
+  .dash-empty{ text-align:center; color:var(--muted); padding:24px 0; font-size:13px; }
+  .dash-loading{ text-align:center; color:var(--muted); padding:24px 0; font-size:13px; font-family:'JetBrains Mono',monospace; }
+  .dash-error{ text-align:center; color:#e0645f; padding:16px 0; font-size:13px; }
 </style>
 </head>
 <body>
@@ -412,6 +448,7 @@
     <div class="pending" id="pendingLabel"><b id="pendingCount">0</b> ej exporterat</div>
     <div class="footer-row">
       <button class="btn-settings" onclick="openLog()">☰</button>
+      <button class="btn-settings" onclick="openDashboard()">📊</button>
       <button class="btn-export" id="btnExport" disabled onclick="openExportConfirm()">Exportera</button>
       <button class="btn-settings" onclick="openSettings()">⚙</button>
     </div>
@@ -444,6 +481,34 @@
     const d = new Date();
     return 'P' + d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
   }
+  // "YYYY-MM-DD" → local Date (date part only) — the shape every Postgres "date" column
+  // comes back as over PostgREST. Used by the dashboard's date-bucketing/sorting.
+  function parseDateStr(s){
+    const p = String(s).split('-').map(Number);
+    return new Date(p[0], p[1]-1, p[2]);
+  }
+  // Same ISO-8601 week/year rule Code.gs used to compute (Thursday-of-the-week decides
+  // the year) — ported here now that the dashboard, not Apps Script, owns this calc.
+  function isoWeekLabel(date){
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7; // Mon=1..Sun=7
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum); // Thursday of this ISO week
+    const isoYear = d.getUTCFullYear();
+    const yearStart = new Date(Date.UTC(isoYear, 0, 1));
+    const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return isoYear + '-v' + (weekNum < 10 ? '0' : '') + weekNum;
+  }
+  // "HH:MM:SS" → minutes since midnight, for the dashboard's pass-length calc.
+  function tidToMinutes(hms){
+    if(!hms) return null;
+    const p = String(hms).split(':').map(Number);
+    return p[0]*60 + (p[1]||0) + (p[2]||0)/60;
+  }
+  function groupBy(rows, keyFn){
+    const map = {};
+    rows.forEach(r => { const k = keyFn(r); (map[k] = map[k] || []).push(r); });
+    return map;
+  }
 
   // ---------- Persistence (localStorage) ----------
   // Mirrors the Fiskelog app: everything not yet exported survives a closed tab,
@@ -464,55 +529,59 @@
     return w || m || s || c || wt;
   }
   function savePending(){
-    try { localStorage.setItem(PENDING_KEY, JSON.stringify({ passId: PASS_ID, warmup: warmupState, mobility: mobilityDone, strength: sessionState, cardio: cardioState, weight: weightEntries })); }
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify({ passId: PASS_ID, warmup: warmupState, mobility: mobilityDone, strength: sessionState, cardio: cardioState, weight: weightEntries, pgSentCount })); }
     catch(e){ /* private browsing / storage disabled — session just won't survive a reload */ }
   }
 
-  // Baked-in backend URL, deployed 2026-08-20. Editable in ⚙ Inställningar — a manually
-  // typed URL is tracked separately (defaultAtSave) so a future update to this constant
-  // (e.g. after redeploying to a new URL) never silently overwrites a deliberate override,
-  // but DOES auto-upgrade a config that was never customized. Same pattern as Fiskelog,
-  // which learned the hard way that a stale localStorage URL can otherwise "win" silently.
-  const DEFAULT_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxArGkD5O046ToCtQJLIrmVKbvPqGynbcr9MEev0KrW-8cVFxaXf578eiLlGXrRBr4x/exec';
   // Best guess at the hosted repo path, matching Fiskelog's kensod123.github.io/<repo>/
   // convention — pt-schema.pdf is uploaded alongside index.html (see README "Hosting").
-  // Just a convenience default, not protected like DEFAULT_WEB_APP_URL: wrong or missing
-  // just means a dead link in ⚙, not a broken app. Correct it there if the repo name differs.
+  // Just a convenience default: wrong or missing just means a dead link in ⚙, not a
+  // broken app. Correct it there if the repo name differs.
   const DEFAULT_PT_PDF_URL = 'https://kensod123.github.io/traningslogg/pt-schema.pdf';
+  // Kept only as a read-only archival link (see ⚙ Inställningar) — the Sheet itself no
+  // longer receives any writes as of the full Postgres cutover below, but the historical
+  // data in it is untouched and still worth being able to open.
   const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1Qg8ZhrUWwu8302Be4iomkA5ZeFMEL4IyuLsYQk35LC8/edit?gid=694039626#gid=694039626';
 
-  // ---------- Postgres dual-write (beta) ----------
-  // Alongside the Sheet export below, also POST straight to Postgres via
-  // PostgREST, over Tailscale — same pattern as Fiskelog's dual-write beta
-  // (see that project's CLAUDE.md "Related project: the Homelab server").
-  // Parallel-run: the Sheet stays the system of record, this write is
-  // purely best-effort (see postgresWrite() below) and never blocks or
-  // fails the Sheet export if it errors. Requires this phone to be joined
-  // to the same Tailscale network as the server.
-  // HTTPS via `tailscale serve` (tailnet-only, valid cert, no public
-  // exposure) — NOT the raw http://<tailscale-ip>:3000 form used earlier,
-  // which a real live test proved unusable: GitHub Pages serves this app
-  // over HTTPS, and browsers unconditionally block a plain-HTTP fetch from
-  // an HTTPS page (Mixed Content), regardless of whether the target is
-  // actually reachable. See README changelog 2026-08-29 for the full story.
+  // ---------- Postgres — sole backend as of the 2026-09-13 cutover ----------
+  // Was a best-effort dual-write alongside the Sheet (see README changelog 2026-08-29/30
+  // for that saga); now the ONLY place workout data is written to or read from. Talks
+  // straight to Homelab's PostgREST, over Tailscale — same pattern Fiskelog uses.
+  // HTTPS via `tailscale serve` (tailnet-only, valid cert, no public exposure) — NOT the
+  // raw http://<tailscale-ip>:3000 form used originally, which a real live test proved
+  // unusable: GitHub Pages serves this app over HTTPS, and browsers unconditionally block
+  // a plain-HTTP fetch from an HTTPS page (Mixed Content), regardless of reachability.
   const PG_BASE_URL = 'https://homeserver.tailffb774.ts.net';
   // Static, non-expiring JWT for the insert-only `gym_writer` Postgres role
   // (no SELECT/UPDATE/DELETE anywhere). Safe to embed here by design — see
   // Homelab's README.md "Gym data" section.
   const PG_JWT = 'eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJyb2xlIjogImd5bV93cml0ZXIifQ.ygOAIPTJ7T70ivriVB7-UA7izJs-PIIPAPVQx21hgN0';
+  // Static, non-expiring JWT for the read-only `gym_reader` PostgREST role (SELECT only,
+  // no write access at all) — mirrors Fiskelog's fishing_reader/PG_READER_TOKEN posture.
+  // Single-user app, nothing shared/multi-tenant, so one static token is fine here too.
+  // Verified 2026-09-13: header/payload decoded to exactly {"alg":"HS256","typ":"JWT"} /
+  // {"role":"gym_reader"}, and a live curl against all six gym.* endpoints returned 200
+  // (a POST attempt correctly got 403 — read-only, as intended).
+  const PG_READER_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiZ3ltX3JlYWRlciJ9.wZn47mgfCldGGhZkgi0xsqOAUYyklorSGuHDr-HCTaw';
+  const PG_READ_PROFILE = 'gym';
+
+  function pgReadHeaders(){
+    return { 'Authorization': 'Bearer ' + PG_READER_TOKEN, 'Accept-Profile': PG_READ_PROFILE };
+  }
+  // Thin GET wrapper around PostgREST — throws on a non-2xx or network failure so callers
+  // (fetchLastSessions/fetchDashboardViews) can share one error-handling path instead of
+  // each re-checking res.ok.
+  async function pgGet(path){
+    const res = await fetch(PG_BASE_URL + path, { headers: pgReadHeaders() });
+    if(!res.ok) throw new Error(path + ' → HTTP ' + res.status);
+    return res.json();
+  }
 
   function loadConfig(){
-    const defaults = { webAppUrl: DEFAULT_WEB_APP_URL, secret: '', sheetUrl: DEFAULT_SHEET_URL, ptPdfUrl: DEFAULT_PT_PDF_URL, defaultAtSave: DEFAULT_WEB_APP_URL };
+    const defaults = { sheetUrl: DEFAULT_SHEET_URL, ptPdfUrl: DEFAULT_PT_PDF_URL };
     try {
       const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null');
-      if (!saved) return defaults;
-      const merged = Object.assign({}, defaults, saved);
-      if (merged.defaultAtSave && merged.defaultAtSave !== DEFAULT_WEB_APP_URL) {
-        // Never manually customized — pick up this file's (newer) baked-in URL automatically.
-        merged.webAppUrl = DEFAULT_WEB_APP_URL;
-        merged.defaultAtSave = DEFAULT_WEB_APP_URL;
-      }
-      return merged;
+      return saved ? Object.assign({}, defaults, saved) : defaults;
     } catch(e){ return defaults; }
   }
   function saveConfig(){
@@ -686,21 +755,78 @@
   ];
 
   // "Last session" data per exercise, keyed by exercise name (not array index — matches
-  // the self-describing shape Code.gs's doGet returns). Empty until fetchLastSessions()
-  // populates it from the real backend; stays empty (→ "Inget tidigare pass loggat") when
-  // no backend is configured yet or the exercise genuinely has no history.
+  // the shape Code.gs's now-retired doGet used to return, so renderLastTime() below
+  // needed no changes). Empty until fetchLastSessions() populates it; stays empty
+  // (→ "Inget tidigare pass loggat") when offline or the exercise genuinely has no history.
   let lastSessions = {};
 
+  // Straight PostgREST reads now (2026-09-13), replacing the old doGet call to Apps
+  // Script — Postgres is the sole backend, see CLAUDE.md "Related project: the Homelab
+  // server". Ports Code.gs's own getLastSessions()/getLastWeight() grouping logic into
+  // JS rather than fetching a bespoke view for it — gym.styrka_sets is tiny (one person's
+  // data), so grouping client-side is simpler than adding server-side aggregation for a
+  // single consumer with nothing else to stay in sync against.
   async function fetchLastSessions(){
-    if(!config.webAppUrl) return;
     try{
-      const res = await fetch(config.webAppUrl);
-      const data = await res.json();
-      if(data.success){
-        if(data.lastSessions){ lastSessions = data.lastSessions; renderLastTime(); }
-        if('lastWeight' in data){ lastWeight = data.lastWeight; renderLastWeight(); }
+      const [styrkaRows, viktRows] = await Promise.all([
+        pgGet('/styrka_sets?select=pass_id,ovning,set_num,vikt_kg,reps&order=pass_id.desc'),
+        pgGet('/vikt?select=vikt_kg,datum,tid&order=datum.desc,tid.desc&limit=1'),
+      ]);
+      lastSessions = computeLastSessions(styrkaRows);
+      renderLastTime();
+      lastWeight = viktRows[0] ? { vikt: viktRows[0].vikt_kg, bmi: null, datum: viktRows[0].datum, tid: viktRows[0].tid } : null;
+      renderLastWeight();
+      applyLastWeightsToFreshSession();
+    } catch(e){ /* offline or backend unreachable — keep whatever we already had */ console.warn('[gym_reader] fetchLastSessions failed:', e); }
+  }
+
+  // Ported 1:1 from Code.gs's getLastSessions() (Pass-ID sorts lexicographically the
+  // same as chronologically: "P" + zero-padded YYYYMMDD).
+  function computeLastSessions(rows){
+    const latestPassIdByExercise = {};
+    rows.forEach(r => {
+      if(!r.ovning || !r.pass_id) return;
+      if(!latestPassIdByExercise[r.ovning] || String(r.pass_id) > String(latestPassIdByExercise[r.ovning])){
+        latestPassIdByExercise[r.ovning] = r.pass_id;
       }
-    } catch(e){ /* offline or backend unreachable — keep whatever we already had */ }
+    });
+    const result = {};
+    Object.keys(latestPassIdByExercise).forEach(ovning => {
+      const passId = latestPassIdByExercise[ovning];
+      const sets = rows
+        .filter(r => r.ovning === ovning && String(r.pass_id) === String(passId))
+        .sort((a,b) => a.set_num - b.set_num);
+      if(!sets.length) return;
+      result[ovning] = { weight: sets[0].vikt_kg, reps: sets.map(s => s.reps) };
+    });
+    return result;
+  }
+
+  // NEW (2026-09-13): carries the weight actually used last time over into a fresh
+  // session, instead of always resetting to the PT's static prescribed startWeight —
+  // was forcing repeated + taps every session just to get back to the real working
+  // weight. Only touches exercises that are still fully untouched this session (no set
+  // logged yet) so it can never clobber a set the user already recorded before this
+  // fetch resolved, and never runs at all when a saved in-progress session was restored
+  // (that session's weights are the user's own recent choices, not stale defaults).
+  function applyLastWeightsToFreshSession(){
+    if(sessionRestoredFromPending) return;
+    let changed = false;
+    exercises.forEach((ex, i) => {
+      const last = lastSessions[ex.name];
+      if(!last || last.weight === null || last.weight === undefined) return;
+      const state = sessionState[i];
+      if(state.sets.every(s => s.reps === null) && state.exWeight !== last.weight){
+        state.exWeight = last.weight;
+        state.sets.forEach(s => { s.weight = last.weight; });
+        changed = true;
+      }
+    });
+    if(changed){
+      document.getElementById('exWeightNum').textContent = fmt(exWeightGet());
+      renderSets();
+      updateExportUi();
+    }
   }
 
   let currentEx = 0;
@@ -717,7 +843,8 @@
       ]
     }));
   }
-  let sessionState = (pendingHasData(savedPending) && Array.isArray(savedPending.strength) && savedPending.strength.length === exercises.length)
+  const sessionRestoredFromPending = pendingHasData(savedPending) && Array.isArray(savedPending.strength) && savedPending.strength.length === exercises.length;
+  let sessionState = sessionRestoredFromPending
     ? savedPending.strength
     : freshState();
 
@@ -883,7 +1010,20 @@
   function fmtBmi(bmi){ return Number(bmi).toLocaleString('sv-SE', {minimumFractionDigits: 1}); }
 
   let weightEntries = (pendingHasData(savedPending) && Array.isArray(savedPending.weight)) ? savedPending.weight : [];
-  let lastWeight = null; // populated from doGet, like lastSessions
+  let lastWeight = null; // populated from fetchLastSessions()
+
+  // Tracks which export "legs" (styrka/uppvarmning/kondition/rorlighet/vikt) have already
+  // landed in Postgres, keyed by row count at the time of success — see performExport().
+  // Needed now that Postgres is the only copy of the data: a partial failure (one table
+  // rejected, or the connection dropped mid-request) must not resend legs that already
+  // succeeded on retry, since none of these tables have Fiskelog's resend-safe
+  // "Prefer: resolution=merge-duplicates" upsert behavior — a plain resend would insert
+  // real duplicate rows. Known accepted limitation: editing/removing an already-sent
+  // item via ☰ between a failed export and its retry changes that leg's row count, so
+  // the whole leg resends (a handful of genuine duplicates) — a narrow, short-lived
+  // window; solving it fully would need real upsert keys on the Homelab side, not
+  // worth the schema change for a single-user app.
+  let pgSentCount = (pendingHasData(savedPending) && savedPending.pgSentCount) ? savedPending.pgSentCount : {};
 
   const weightInput = document.getElementById('weightInput');
   const bmiReadoutEl = document.getElementById('bmiReadout');
@@ -934,6 +1074,7 @@
     sessionState = freshState();
     cardioState = warmupExercises.map(() => ({ duration: null, time: null }));
     weightEntries = [];
+    pgSentCount = {};
     renderWeightList();
     renderCardio();
     renderWarmup();
@@ -952,9 +1093,8 @@
 
   // ================= EXPORT =================
   // Mirrors the Fiskelog app's export pattern: a pending counter, a confirm-before-send
-  // modal, and a POST to the Apps Script web app. config.webAppUrl is empty until the
-  // Google Sheet + Apps Script backend exists (set it from ⚙ Inställningar once it does) —
-  // performExport() says so plainly instead of pretending to succeed.
+  // modal, then POSTs straight to Postgres (see performExport() below) — the Apps
+  // Script/Sheet leg this used to also send to was retired in the 2026-09-13 cutover.
   const btnExport = document.getElementById('btnExport');
   const pendingCountEl = document.getElementById('pendingCount');
 
@@ -978,7 +1118,7 @@
     if(n === 0) return;
     openOverlay(`
       <h2>Exportera ${n} rad${n === 1 ? '' : 'er'}?</h2>
-      <p>Skickar all ej exporterad data till Google Sheet. Kräver internetanslutning.</p>
+      <p>Skickar all ej exporterad data till Postgres (Homelab). Kräver internetanslutning + Tailscale.</p>
       <div class="row-actions">
         <button class="btn-cancel" id="mCancel">Avbryt</button>
         <button class="btn-confirm" id="mConfirm">Ja, exportera</button>
@@ -1043,16 +1183,16 @@
     return (entries || []).map(w => ({ datum: w.datum, tid: w.tid || null, vikt_kg: w.vikt }));
   }
 
-  // One bulk-insert POST to a PostgREST endpoint. Best-effort and self-
-  // contained: NEVER throws, so a caller can fire this without awaiting it
-  // and it can never affect the Sheet export's own success/failure path.
-  // Distinguishes, via console.warn, "couldn't reach the server at all"
-  // (offline/not on the tailnet/server down — expected, nothing to act on)
-  // from "server rejected this data" (a real signal: a CHECK/FK constraint
-  // failed, meaning this app's value lists and the gym schema's reference
-  // data have drifted apart).
+  // One bulk-insert POST to a PostgREST endpoint. Used to be fire-and-forget/best-effort
+  // back when the Sheet was the real success signal (see README changelog 2026-08-29) —
+  // now that Postgres is the ONLY copy of the data, a failure here has to be reported
+  // back to the caller instead of just console.warn'd, so performExport() can decide
+  // whether it's actually safe to clear the pending session. Distinguishes "couldn't
+  // reach the server at all" (offline/not on the tailnet/server down) from "server
+  // rejected this data" (a real signal: a CHECK/FK constraint failed, meaning this app's
+  // value lists and the gym schema's reference data have drifted apart) — both still
+  // logged via console.warn for debugging, same as before.
   async function postgresWrite(path, rowsArr){
-    if(!rowsArr.length) return;
     try{
       const res = await fetch(PG_BASE_URL + path, {
         method: 'POST',
@@ -1069,70 +1209,364 @@
       });
       if(!res.ok){
         const body = await res.text().catch(()=>'');
-        console.warn('[Postgres dual-write] ' + path + ' rejected (' + res.status + '): ' + body);
+        console.warn('[Postgres] ' + path + ' rejected (' + res.status + '): ' + body);
+        return { ok: false, reason: 'rejected', status: res.status, detail: body };
       }
+      return { ok: true };
     } catch(err){
-      console.warn('[Postgres dual-write] ' + path + ' unreachable (offline or not on the tailnet?):', err);
+      console.warn('[Postgres] ' + path + ' unreachable (offline or not on the tailnet?):', err);
+      return { ok: false, reason: 'unreachable', detail: String(err) };
     }
   }
 
+  // Postgres is the sole backend as of the 2026-09-13 cutover — no more Sheet leg here.
+  // Each "leg" (one table) is sent independently and tracked in pgSentCount so a partial
+  // failure (say uppvärmning rejected while styrka_sets succeeded) never resends a leg
+  // that already landed on retry — see pgSentCount's own comment above for why that
+  // matters now that there's no Sheet safety net and no upsert-on-resend on these tables.
+  // The pending session is only cleared once every non-empty leg has actually succeeded.
   async function performExport(){
-    if(!config.webAppUrl){
-      btnExport.textContent = 'Ingen backend kopplad ännu';
-      setTimeout(() => { btnExport.textContent = 'Exportera'; updateExportUi(); }, 2500);
-      return;
-    }
     btnExport.disabled = true;
     btnExport.textContent = 'Skickar…';
     try{
       // Self-describing payload: each entry carries its own exercise/machine name rather
-      // than relying on array position matching Code.gs's own copy of the exercise list —
+      // than relying on array position matching a server-side copy of the exercise list —
       // that coupling would silently misattribute data the day either list gets reordered.
       const warmupPayload = warmupState.map((w, i) => ({ name: warmupExercises[i], duration: w.duration, time: w.time }));
       const strengthPayload = sessionState.map((ex, i) => ({ name: exercises[i].name, exWeight: ex.exWeight, rpe: ex.rpe, note: ex.note, sets: ex.sets }));
       const cardioPayload = cardioState.map((c, i) => ({ name: warmupExercises[i], duration: c.duration, time: c.time }));
-
-      // Dual-write beta: fired in parallel, never awaited as part of the
-      // Sheet export's own success/failure path below — postgresWrite()
-      // never throws, so this can't delay or break the Sheet write even
-      // on total failure. The promises ARE collected (pgWrites), though —
-      // see the Promise.allSettled() near the end of this function for why.
       const pgDatum = pgDateFromPassId(PASS_ID);
-      const pgWrites = [
-        postgresWrite('/styrka_sets', buildStyrkaRows(PASS_ID, pgDatum, strengthPayload)),
-        postgresWrite('/uppvarmning', buildMachineRows(PASS_ID, pgDatum, warmupPayload)),
-        postgresWrite('/kondition', buildMachineRows(PASS_ID, pgDatum, cardioPayload)),
-        postgresWrite('/rorlighet', buildRorlighetRows(PASS_ID, pgDatum, mobilityDone)),
-        postgresWrite('/vikt', buildViktRows(weightEntries))
+
+      const legs = [
+        { key: 'styrka', path: '/styrka_sets', rows: buildStyrkaRows(PASS_ID, pgDatum, strengthPayload) },
+        { key: 'uppvarmning', path: '/uppvarmning', rows: buildMachineRows(PASS_ID, pgDatum, warmupPayload) },
+        { key: 'kondition', path: '/kondition', rows: buildMachineRows(PASS_ID, pgDatum, cardioPayload) },
+        { key: 'rorlighet', path: '/rorlighet', rows: buildRorlighetRows(PASS_ID, pgDatum, mobilityDone) },
+        { key: 'vikt', path: '/vikt', rows: buildViktRows(weightEntries) },
       ];
 
-      const res = await fetch(config.webAppUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ passId: PASS_ID, warmup: warmupPayload, mobility: mobilityDone, strength: strengthPayload, cardio: cardioPayload, weight: weightEntries, secret: config.secret })
-      });
-      const data = await res.json();
-      if(data.success){
+      const toSend = legs.filter(l => l.rows.length && pgSentCount[l.key] !== l.rows.length);
+      const results = await Promise.all(toSend.map(l => postgresWrite(l.path, l.rows)));
+      toSend.forEach((l, i) => { if(results[i].ok) pgSentCount[l.key] = l.rows.length; });
+
+      const stillPending = legs.some(l => l.rows.length && pgSentCount[l.key] !== l.rows.length);
+      if(!stillPending){
         btnExport.textContent = `Klart! ${pendingCount()} sparade ✓`;
         clearPendingSession();
+        fetchLastSessions(); // so a same-day second pass sees what was just logged
       } else {
-        btnExport.textContent = 'Fel: ' + (data.error || 'okänt');
+        const anyUnreachable = results.some(r => !r.ok && r.reason === 'unreachable');
+        btnExport.textContent = anyUnreachable ? 'Ingen anslutning — försök igen senare' : 'Fel: kunde inte spara — försök igen';
+        savePending(); // persist pgSentCount progress so a retry skips whatever already succeeded
       }
-      // Wait for the Postgres writes to actually settle before this function
-      // returns — the Sheet export's own success message above already appeared
-      // immediately, unaffected. Without this, a real bug surfaced during rollout
-      // (2026-08-29): the function returning right after firing the writes, with
-      // nothing ever awaiting them, meant an in-flight fetch() could be silently
-      // abandoned if the tab got backgrounded (e.g. the phone locks right after
-      // tapping Exportera — a very plausible habit right after finishing a
-      // workout) before it resolved either way. Awaiting here (still AFTER the
-      // user already sees "Klart!") gives every write a real chance to finish
-      // while the tab is still definitely alive.
-      await Promise.allSettled(pgWrites);
     } catch(err){
-      btnExport.textContent = 'Ingen anslutning — försök igen senare';
+      btnExport.textContent = 'Fel: ' + ((err && err.message) || err);
     }
     setTimeout(() => { btnExport.textContent = 'Exportera'; updateExportUi(); }, 2500);
+  }
+
+  // ================= DASHBOARD =================
+  // In-app stats view reading straight from Postgres over PostgREST (gym_reader — see
+  // PG_READER_TOKEN above), mirroring Fiskelog's "NappNytt" dashboard: hand-rolled
+  // HTML/CSS/SVG, no chart library. Unlike NappNytt, there's no second (e.g. Streamlit)
+  // dashboard reading the same gym data to risk drifting against, so every stat below is
+  // computed client-side, porting the logic that used to live in Code.gs's getLastSessions/
+  // getLastWeight plus the Sheet's own hand-built Beräkningar/Pass/Veckomål tabs (see
+  // README.md "xlsx-strukturen") — nothing here is stored back to Postgres, it's all
+  // derived fresh from the raw rows on every open.
+  const WEEKLY_GOAL = 2; // styrkepass/vecka — was Veckomål!G1 in the Sheet, now just a constant
+  const EX_COLORS = ['#E8A33D', '#6FCF97', '#5aa8c9', '#d98c5a', '#9184d9', '#c96b8f'];
+
+  let dashStats = null;
+  let dashActiveTab = 'oversikt';
+
+  async function fetchDashboardViews(){
+    // maskininstallningar is deliberately NOT fetched here — the app's own `exercises`
+    // constant above already IS the client copy of that static, PT-maintained reference
+    // table (name/startWeight/settings), kept in sync by hand per README's "Lägga till en
+    // ny övning" steps. Fetching it too would just be a second, redundant source of truth
+    // for the same static data.
+    const [styrka, uppvarmning, kondition, rorlighet, vikt] = await Promise.all([
+      pgGet('/styrka_sets?select=pass_id,datum,tid,ovning,set_num,vikt_kg,reps,rpe&order=pass_id.asc,set_num.asc'),
+      pgGet('/uppvarmning?select=pass_id,datum'),
+      pgGet('/kondition?select=pass_id,datum'),
+      pgGet('/rorlighet?select=pass_id,gjord'),
+      pgGet('/vikt?select=datum,tid,vikt_kg&order=datum.asc,tid.asc'),
+    ]);
+    return { styrka, uppvarmning, kondition, rorlighet, vikt };
+  }
+
+  function computeTraningsStats(views){
+    const { styrka, uppvarmning, kondition, rorlighet, vikt } = views;
+
+    // ---- one row per gym visit ("pass"), same shape as the Sheet's Pass tab used to
+    // upsert — computed fresh here instead, since nothing but this dashboard reads it
+    // back. Vikt is deliberately excluded: standalone home weigh-ins are never a "pass",
+    // same rule Code.gs enforced (see ensurePassRow's strengthCount||warmupCount||... guard). ----
+    const passIds = new Set();
+    styrka.forEach(r => passIds.add(r.pass_id));
+    uppvarmning.forEach(r => passIds.add(r.pass_id));
+    kondition.forEach(r => passIds.add(r.pass_id));
+    const styrkaByPass = groupBy(styrka, r => r.pass_id);
+    const konditionPassIds = new Set(kondition.map(r => r.pass_id));
+    const rorlighetByPass = {};
+    rorlighet.forEach(r => { rorlighetByPass[r.pass_id] = r.gjord; });
+
+    const passSummary = Array.from(passIds).map(passId => {
+      const sets = styrkaByPass[passId] || [];
+      const datum = sets[0]?.datum
+        || (uppvarmning.find(r => r.pass_id === passId) || {}).datum
+        || (kondition.find(r => r.pass_id === passId) || {}).datum
+        || null;
+      // Known limitation, same one the Sheet's Pass!Längd formula always had: only counts
+      // the span between the first and last logged STRENGTH set — doesn't see warm-up/
+      // changing-room time before that, so this always underestimates real time in the gym.
+      const times = sets.map(s => tidToMinutes(s.tid)).filter(t => t !== null);
+      const langdMin = times.length ? Math.round((Math.max(...times) - Math.min(...times)) * 10) / 10 : null;
+      const volym = sets.reduce((s, r) => s + (r.vikt_kg || 0) * (r.reps || 0), 0);
+      const rpes = sets.map(s => s.rpe).filter(r => r !== null && r !== undefined);
+      return {
+        passId, datum,
+        vecka: datum ? isoWeekLabel(parseDateStr(datum)) : null,
+        styrkaGjord: sets.length > 0,
+        konditionGjord: konditionPassIds.has(passId),
+        volym,
+        snittRpe: rpes.length ? rpes.reduce((a, b) => a + b, 0) / rpes.length : null,
+        langdMin,
+      };
+    }).filter(p => p.datum).sort((a, b) => a.datum < b.datum ? -1 : a.datum > b.datum ? 1 : 0);
+
+    const today = new Date();
+    const todayStr = todayDateStr();
+    const thisWeek = isoWeekLabel(today);
+    const totalPass = passSummary.length;
+    const passDennaVecka = passSummary.filter(p => p.vecka === thisWeek).length;
+    const passDennaManad = passSummary.filter(p => p.datum.slice(0, 7) === todayStr.slice(0, 7)).length;
+    const firstPassDatum = totalPass ? passSummary[0].datum : null;
+    const weeksElapsed = firstPassDatum ? Math.max(1, Math.ceil((today - parseDateStr(firstPassDatum)) / (7 * 86400000))) : 1;
+    const snittPassPerVecka = totalPass ? Math.round((totalPass / weeksElapsed) * 10) / 10 : 0;
+    const lastPassDatum = totalPass ? passSummary[passSummary.length - 1].datum : null;
+    const dagarSedanPass = lastPassDatum ? Math.round((today - parseDateStr(lastPassDatum)) / 86400000) : null;
+
+    const totalVolym = styrka.reduce((s, r) => s + (r.vikt_kg || 0) * (r.reps || 0), 0);
+    const lastStyrkaPassId = styrka.length ? styrka.reduce((max, r) => String(r.pass_id) > String(max) ? r.pass_id : max, styrka[0].pass_id) : null;
+    const volymSenastePasset = styrka.filter(r => r.pass_id === lastStyrkaPassId).reduce((s, r) => s + (r.vikt_kg || 0) * (r.reps || 0), 0);
+    const langder = passSummary.map(p => p.langdMin).filter(l => l !== null);
+    const snittLangd = langder.length ? Math.round((langder.reduce((a, b) => a + b, 0) / langder.length) * 10) / 10 : null;
+    const kroppsvikt = vikt.length ? vikt[vikt.length - 1].vikt_kg : null;
+
+    // ---- per exercise (mirrors the Sheet's Övningar table + Beräkningar's "Öka vikt?"
+    // heuristic, README.md "Öka vikt? — RPE-baserad progressionsregel") ----
+    const byExercise = groupBy(styrka, r => r.ovning);
+    const ovningar = exercises.map(ex => {
+      const rows = byExercise[ex.name] || [];
+      const byPass = groupBy(rows, r => r.pass_id);
+      const passOrder = Object.keys(byPass).sort(); // Pass-ID sorts lexicographically == chronologically
+      const pr = rows.length ? Math.max(...rows.map(r => r.vikt_kg || 0)) : null;
+      const totalVolymEx = rows.reduce((s, r) => s + (r.vikt_kg || 0) * (r.reps || 0), 0);
+
+      const lastPassId = passOrder[passOrder.length - 1] || null;
+      const prevPassId = passOrder[passOrder.length - 2] || null;
+      const lastSets = lastPassId ? byPass[lastPassId] : [];
+      const prevSets = prevPassId ? byPass[prevPassId] : [];
+      // RPE lives on whichever set was that exercise's last logged one that pass (only set
+      // once set 3 is filled) — never assume it's set_num 3, a pass might stop at set 1/2.
+      const rpeOf = sets => { const r = sets.find(s => s.rpe !== null && s.rpe !== undefined); return r ? r.rpe : null; };
+      const weightOf = sets => sets.length ? sets[0].vikt_kg : null;
+
+      const senasteVikt = weightOf(lastSets);
+      const senasteReps = lastSets.map(s => s.reps);
+      const rpeNu = rpeOf(lastSets);
+      const rpeForra = rpeOf(prevSets);
+      const utveckling = senasteVikt !== null ? Math.round((senasteVikt - ex.startWeight) * 10) / 10 : null;
+
+      let okaVikt = 'Mer data';
+      if(passOrder.length >= 2){
+        const prevVikt = weightOf(prevSets);
+        okaVikt = (rpeNu !== null && rpeForra !== null && rpeNu <= 7 && rpeForra <= 7 && senasteVikt === prevVikt)
+          ? '✅ Öka vikt' : '➖ Behåll vikt';
+      }
+
+      // One point per pass this exercise was actually logged in — never a 0 for a
+      // skipped pass, matching the Sheet's Progression tab rule (blank, not 0, so the
+      // line chart doesn't show a fake dip on a day the exercise wasn't done at all).
+      const series = passOrder.map(pid => ({ datum: byPass[pid][0].datum, vikt: weightOf(byPass[pid]) }));
+
+      return { name: ex.name, short: ex.short, startvikt: ex.startWeight, senasteVikt, senasteReps, pr, utveckling, rpeNu, rpeForra, totalVolymEx, okaVikt, series };
+    });
+    const redoAttOka = ovningar.filter(o => o.okaVikt === '✅ Öka vikt').length;
+
+    // ---- last 8 ISO weeks, oldest first (mirrors the Sheet's 8-veckors veckoöversikt) ----
+    const veckor = [];
+    for(let i = 7; i >= 0; i--){
+      const d = new Date(today.getTime() - i * 7 * 86400000);
+      const label = isoWeekLabel(d);
+      const passesThisWeek = passSummary.filter(p => p.vecka === label);
+      const antalStyrka = passesThisWeek.filter(p => p.styrkaGjord).length;
+      const rpes = passesThisWeek.map(p => p.snittRpe).filter(r => r !== null);
+      veckor.push({
+        label,
+        antalStyrka,
+        antalKondition: passesThisWeek.filter(p => p.konditionGjord).length,
+        malUppnatt: antalStyrka >= WEEKLY_GOAL,
+        volymVecka: passesThisWeek.reduce((s, p) => s + p.volym, 0),
+        snittRpe: rpes.length ? Math.round((rpes.reduce((a, b) => a + b, 0) / rpes.length) * 10) / 10 : null,
+      });
+    }
+
+    const kroppsviktSeries = vikt.map(v => ({ datum: v.datum, vikt: v.vikt_kg }));
+
+    return {
+      oversikt: { totalPass, passDennaVecka, passDennaManad, snittPassPerVecka, dagarSedanPass, totalVolym, volymSenastePasset, snittLangd, kroppsvikt, redoAttOka },
+      ovningar, veckor, kroppsviktSeries,
+    };
+  }
+
+  // Minimal hand-rolled SVG line chart — no library, matching how the rest of this app
+  // (and Fiskelog's NappNytt) has always drawn everything with plain HTML/CSS/SVG.
+  // seriesList: [{ color, points: [{t: <sortable number, e.g. a Date's getTime()>, v: number}] }]
+  function buildLineChartSVG(width, height, seriesList){
+    const allPoints = seriesList.flatMap(s => s.points);
+    if(!allPoints.length) return '<div class="dash-empty">Ingen data ännu</div>';
+    const ts = allPoints.map(p => p.t), vs = allPoints.map(p => p.v);
+    const tMin = Math.min(...ts), tMax = Math.max(...ts);
+    const vMin = Math.min(0, ...vs), vMax = Math.max(...vs) || 1;
+    const pad = 6;
+    const sx = t => pad + (tMax > tMin ? (t - tMin) / (tMax - tMin) : 0.5) * (width - pad * 2);
+    const sy = v => height - pad - (vMax > vMin ? (v - vMin) / (vMax - vMin) : 0.5) * (height - pad * 2);
+    const shapes = seriesList.map(s => {
+      if(s.points.length === 1){
+        const p = s.points[0];
+        return `<circle cx="${sx(p.t).toFixed(1)}" cy="${sy(p.v).toFixed(1)}" r="2.5" fill="${s.color}"/>`;
+      }
+      if(s.points.length < 2) return '';
+      const d = s.points.map(p => `${sx(p.t).toFixed(1)},${sy(p.v).toFixed(1)}`).join(' ');
+      return `<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" preserveAspectRatio="none">${shapes}</svg>`;
+  }
+
+  function dashboardNavHTML(active){
+    const tabs = [['oversikt', 'Översikt'], ['ovningar', 'Övningar'], ['veckor', 'Veckor'], ['utveckling', 'Utveckling']];
+    return `<div class="dash-nav">${tabs.map(([k, label]) => `<button data-dashtab="${k}" class="${k === active ? 'active' : ''}">${label}</button>`).join('')}</div>`;
+  }
+
+  function renderDashOversiktHTML(stats){
+    const o = stats.oversikt;
+    const kpi = (label, value, sub) => `
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">${label}</div>
+        <div class="dash-kpi-value">${value}</div>
+        ${sub ? `<div class="dash-kpi-sub">${sub}</div>` : ''}
+      </div>`;
+    return `<div class="dash-kpi-grid">
+      ${kpi('Pass totalt', o.totalPass)}
+      ${kpi('Denna vecka', o.passDennaVecka)}
+      ${kpi('Denna månad', o.passDennaManad)}
+      ${kpi('Snitt/vecka', fmt(o.snittPassPerVecka))}
+      ${kpi('Dagar sedan pass', o.dagarSedanPass ?? '–')}
+      ${kpi('Redo öka vikt', o.redoAttOka)}
+      ${kpi('Total volym', fmt(Math.round(o.totalVolym)), 'kg')}
+      ${kpi('Volym senaste pass', fmt(Math.round(o.volymSenastePasset)), 'kg')}
+      ${kpi('Snitt passlängd', o.snittLangd !== null ? fmt(o.snittLangd) : '–', 'min')}
+      ${kpi('Kroppsvikt', o.kroppsvikt !== null ? fmt(o.kroppsvikt) : '–', 'kg')}
+    </div>`;
+  }
+
+  function renderDashOvningarHTML(stats){
+    const rows = stats.ovningar.map(o => `
+      <tr>
+        <td>${o.short}</td>
+        <td>${fmt(o.startvikt)}</td>
+        <td>${o.senasteVikt !== null ? fmt(o.senasteVikt) + ' · ' + o.senasteReps.join('/') : '–'}</td>
+        <td>${o.pr !== null ? fmt(o.pr) : '–'}</td>
+        <td>${o.utveckling !== null ? (o.utveckling > 0 ? '+' : '') + fmt(o.utveckling) : '–'}</td>
+        <td>${o.rpeNu ?? '–'}</td>
+        <td>${o.rpeForra ?? '–'}</td>
+        <td>${fmt(Math.round(o.totalVolymEx))}</td>
+        <td class="${o.okaVikt.startsWith('✅') ? 'dash-oka-yes' : 'dash-oka-no'}">${o.okaVikt}</td>
+      </tr>`).join('');
+    return `<div class="dash-table-wrap"><table class="dash-table">
+      <thead><tr><th>Övning</th><th>Start</th><th>Senaste</th><th>PR</th><th>Utv.</th><th>RPE nu</th><th>RPE förra</th><th>Volym</th><th>Öka vikt?</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
+  function renderDashVeckorHTML(stats){
+    const maxVolym = Math.max(1, ...stats.veckor.map(v => v.volymVecka));
+    const bars = stats.veckor.map(v => `
+      <div class="dash-hbar-row">
+        <div class="dash-hbar-label">${v.label}</div>
+        <div class="dash-hbar-track"><div class="dash-hbar-fill" style="width:${Math.round(v.volymVecka / maxVolym * 100)}%"></div></div>
+        <div class="dash-hbar-value">${Math.round(v.volymVecka)}</div>
+      </div>`).join('');
+    const rows = stats.veckor.map(v => `
+      <tr>
+        <td>${v.label}</td>
+        <td>${v.antalStyrka}</td>
+        <td>${v.antalKondition}</td>
+        <td class="${v.malUppnatt ? 'dash-oka-yes' : 'dash-oka-no'}">${v.malUppnatt ? '✅ Ja' : '❌ Nej'}</td>
+        <td>${v.snittRpe ?? '–'}</td>
+      </tr>`).join('');
+    return `
+      <div class="dash-section-title">Volym per vecka (kg)</div>
+      <div class="dash-chart-card"><div class="dash-hbars">${bars}</div></div>
+      <div class="dash-section-title">Senaste 8 veckorna</div>
+      <div class="dash-table-wrap"><table class="dash-table">
+        <thead><tr><th>Vecka</th><th>Styrka</th><th>Kondition</th><th>Mål (${WEEKLY_GOAL}/v)</th><th>Snitt RPE</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`;
+  }
+
+  function renderDashUtvecklingHTML(stats){
+    const bwPoints = stats.kroppsviktSeries.map(p => ({ t: parseDateStr(p.datum).getTime(), v: p.vikt }));
+    const bwChart = buildLineChartSVG(320, 90, [{ color: '#E8A33D', points: bwPoints }]);
+
+    const exSeries = stats.ovningar
+      .filter(o => o.series.some(p => p.vikt !== null))
+      .map((o, i) => ({
+        color: EX_COLORS[i % EX_COLORS.length],
+        short: o.short,
+        points: o.series.filter(p => p.vikt !== null).map(p => ({ t: parseDateStr(p.datum).getTime(), v: p.vikt })),
+      }));
+    const exChart = buildLineChartSVG(320, 140, exSeries);
+    const legend = exSeries.map(s => `<div class="dash-legend-item"><span class="dash-legend-swatch" style="background:${s.color}"></span>${s.short}</div>`).join('');
+
+    return `
+      <div class="dash-section-title">Kroppsvikt över tid</div>
+      <div class="dash-chart-card">${bwChart}</div>
+      <div class="dash-section-title">Vikt per övning över tid</div>
+      <div class="dash-chart-card">${exChart}<div class="dash-legend">${legend}</div></div>`;
+  }
+
+  function renderDashboardBody(){
+    const body = document.getElementById('dashBody');
+    if(!body || !dashStats) return;
+    const pageHtml = {
+      oversikt: renderDashOversiktHTML(dashStats),
+      ovningar: renderDashOvningarHTML(dashStats),
+      veckor: renderDashVeckorHTML(dashStats),
+      utveckling: renderDashUtvecklingHTML(dashStats),
+    }[dashActiveTab];
+    body.innerHTML = dashboardNavHTML(dashActiveTab) + pageHtml;
+    body.querySelectorAll('[data-dashtab]').forEach(btn => {
+      btn.addEventListener('click', () => { dashActiveTab = btn.dataset.dashtab; renderDashboardBody(); });
+    });
+  }
+
+  async function openDashboard(){
+    openOverlay(`<h2>Dashboard</h2><div id="dashBody"><div class="dash-loading">Hämtar data …</div></div>`);
+    try{
+      const views = await fetchDashboardViews();
+      dashStats = computeTraningsStats(views);
+      renderDashboardBody();
+    } catch(err){
+      const body = document.getElementById('dashBody');
+      if(!body) return; // overlay was closed before the fetch resolved
+      body.innerHTML = `<div class="dash-error">Kunde inte hämta data.<br>${(err && err.message) || err}</div>
+        <button class="modal-save" id="dashRetry" style="margin-top:10px;">Försök igen</button>`;
+      document.getElementById('dashRetry').addEventListener('click', openDashboard);
+    }
   }
 
   // ================= LOG (what's not exported yet) =================
@@ -1228,28 +1662,23 @@
   }
 
   // ================= SETTINGS =================
+  // No backend-URL/shared-secret fields anymore — Postgres (PG_BASE_URL/PG_JWT/
+  // PG_READER_TOKEN above) is baked in, not user-configurable, same as Fiskelog's
+  // equivalent constants. The Sheet link stays as a read-only archival reference —
+  // see DEFAULT_SHEET_URL's own comment.
   function openSettings(){
     openOverlay(`
       <h2>Inställningar</h2>
-      <a href="${config.sheetUrl || '#'}" target="_blank" rel="noopener" class="modal-link ${config.sheetUrl ? '' : 'disabled'}">📄 Öppna Google Sheet</a>
+      <a href="${config.sheetUrl || '#'}" target="_blank" rel="noopener" class="modal-link ${config.sheetUrl ? '' : 'disabled'}">📄 Öppna Google Sheet (arkiv)</a>
       <a href="${config.ptPdfUrl || '#'}" target="_blank" rel="noopener" class="modal-link ${config.ptPdfUrl ? '' : 'disabled'}">📋 Öppna PT-schema (PDF)</a>
       <hr class="modal-hr">
-      <div class="field"><label>Web App URL</label><input type="text" id="fUrl" value="${config.webAppUrl}" placeholder="https://script.google.com/macros/s/.../exec"></div>
-      <div class="field"><label>Delad nyckel (valfritt)</label><input type="text" id="fSecret" value="${config.secret}"></div>
       <div class="field"><label>Länk till Google Sheet (valfritt)</label><input type="text" id="fSheetUrl" value="${config.sheetUrl}" placeholder="https://docs.google.com/spreadsheets/..."></div>
       <div class="field"><label>Länk till PT-schema PDF (valfritt)</label><input type="text" id="fPdfUrl" value="${config.ptPdfUrl}" placeholder="https://..."></div>
       <button class="modal-save" id="fSave">Spara</button>
     `);
     document.getElementById('fSave').addEventListener('click', () => {
-      const newUrl = document.getElementById('fUrl').value.trim();
-      config.webAppUrl = newUrl;
-      config.secret = document.getElementById('fSecret').value.trim();
       config.sheetUrl = document.getElementById('fSheetUrl').value.trim();
       config.ptPdfUrl = document.getElementById('fPdfUrl').value.trim();
-      // Only tracked as "the default" (auto-upgradeable later) if it matches what's
-      // actually baked into this file right now — a manually typed/custom URL keeps
-      // defaultAtSave at null so it's never silently overwritten by a future update.
-      config.defaultAtSave = (newUrl === DEFAULT_WEB_APP_URL) ? DEFAULT_WEB_APP_URL : null;
       saveConfig();
       closeOverlay();
     });
