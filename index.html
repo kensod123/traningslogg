@@ -79,6 +79,11 @@
 
   .last-time{ text-align:center; font-size:12px; color:var(--muted); margin-top:10px; margin-bottom: 18px; font-family:'JetBrains Mono',monospace; }
   .last-time strong{ color:var(--text); font-weight:600; }
+  /* NEW (2026-09-14): "Öka vikt?" badge, shown under "Förra passet" — see renderLastTime(). */
+  .rec-badge{ display:inline-block; margin-top:8px; padding:4px 11px; border-radius:20px; font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; letter-spacing:.02em; }
+  .rec-badge.rec-yes{ background:rgba(111,207,151,0.12); color:var(--ok); }
+  .rec-badge.rec-no{ background:rgba(255,255,255,0.05); color:var(--muted); }
+  .rec-badge.rec-neutral{ background:rgba(255,255,255,0.05); color:var(--muted); font-style:italic; }
 
   .sets{ display:flex; gap:10px; }
   .set-pill{
@@ -528,6 +533,18 @@
     rows.forEach(r => { const k = keyFn(r); (map[k] = map[k] || []).push(r); });
     return map;
   }
+  // NEW (2026-09-14): the ONE place the "Öka vikt?" decision gets made — used by both
+  // the main Styrka screen (renderLastTime, see below) and the dashboard's Övningar tab
+  // (computeTraningsStats), so the two views can never quietly disagree on the same
+  // exercise. Same rule as before: last two logged sessions both RPE ≤ 7 AND same
+  // weight → suggest increasing.
+  function okaViktRecommendation(passCount, lastWeight, lastRpe, prevWeight, prevRpe){
+    if(passCount < 2) return 'Mer data';
+    if(lastRpe !== null && prevRpe !== null && lastRpe <= 7 && prevRpe <= 7 && lastWeight === prevWeight){
+      return '✅ Öka vikt';
+    }
+    return '➖ Behåll vikt';
+  }
 
   // ---------- Persistence (localStorage) ----------
   // Mirrors the Fiskelog app: everything not yet exported survives a closed tab,
@@ -788,7 +805,7 @@
   async function fetchLastSessions(){
     try{
       const [styrkaRows, viktRows] = await Promise.all([
-        pgGet('/styrka_sets?select=pass_id,ovning,set_num,vikt_kg,reps&order=pass_id.desc'),
+        pgGet('/styrka_sets?select=pass_id,ovning,set_num,vikt_kg,reps,rpe&order=pass_id.desc'),
         pgGet('/vikt?select=vikt_kg,datum,tid&order=datum.desc,tid.desc&limit=1'),
       ]);
       lastSessions = computeLastSessions(styrkaRows);
@@ -799,24 +816,29 @@
     } catch(e){ /* offline or backend unreachable — keep whatever we already had */ console.warn('[gym_reader] fetchLastSessions failed:', e); }
   }
 
-  // Ported 1:1 from Code.gs's getLastSessions() (Pass-ID sorts lexicographically the
-  // same as chronologically: "P" + zero-padded YYYYMMDD).
+  // Originally ported 1:1 from Code.gs's getLastSessions() (Pass-ID sorts
+  // lexicographically the same as chronologically: "P" + zero-padded YYYYMMDD).
+  // Extended (2026-09-14) to also carry the previous pass's weight/RPE, so the main
+  // Styrka screen can show the same "Öka vikt?" call the dashboard already made —
+  // via okaViktRecommendation(), one shared function, not two copies of the rule.
   function computeLastSessions(rows){
-    const latestPassIdByExercise = {};
-    rows.forEach(r => {
-      if(!r.ovning || !r.pass_id) return;
-      if(!latestPassIdByExercise[r.ovning] || String(r.pass_id) > String(latestPassIdByExercise[r.ovning])){
-        latestPassIdByExercise[r.ovning] = r.pass_id;
-      }
-    });
+    const byExercise = groupBy(rows, r => r.ovning);
     const result = {};
-    Object.keys(latestPassIdByExercise).forEach(ovning => {
-      const passId = latestPassIdByExercise[ovning];
-      const sets = rows
-        .filter(r => r.ovning === ovning && String(r.pass_id) === String(passId))
-        .sort((a,b) => a.set_num - b.set_num);
-      if(!sets.length) return;
-      result[ovning] = { weight: sets[0].vikt_kg, reps: sets.map(s => s.reps) };
+    Object.keys(byExercise).forEach(ovning => {
+      const byPass = groupBy(byExercise[ovning], r => r.pass_id);
+      const passOrder = Object.keys(byPass).sort();
+      if(!passOrder.length) return;
+      const rpeOf = sets => { const r = sets.find(s => s.rpe !== null && s.rpe !== undefined); return r ? r.rpe : null; };
+      const lastSets = byPass[passOrder[passOrder.length - 1]].slice().sort((a,b) => a.set_num - b.set_num);
+      const prevSets = passOrder.length >= 2 ? byPass[passOrder[passOrder.length - 2]] : null;
+      result[ovning] = {
+        weight: lastSets[0].vikt_kg,
+        reps: lastSets.map(s => s.reps),
+        rpe: rpeOf(lastSets),
+        passCount: passOrder.length,
+        prevWeight: prevSets ? prevSets[0].vikt_kg : null,
+        prevRpe: prevSets ? rpeOf(prevSets) : null,
+      };
     });
     return result;
   }
@@ -932,13 +954,19 @@
     updateExportUi();
   }
 
+  // NEW (2026-09-14): shows the same "Öka vikt?" call as the dashboard's Övningar
+  // tab, right where it's actually useful — mid-workout, not just after the fact in
+  // a separate screen. Shares okaViktRecommendation() so the two never disagree.
   function renderLastTime(){
     const last = lastSessions[exercises[currentEx].name];
     if(!last){
       lastTimeEl.innerHTML = 'Inget tidigare pass loggat för denna övning';
       return;
     }
-    lastTimeEl.innerHTML = `Förra passet: <strong>${fmt(last.weight)} kg</strong> · ${last.reps.join(' · ')}`;
+    const rec = okaViktRecommendation(last.passCount, last.weight, last.rpe, last.prevWeight, last.prevRpe);
+    const recClass = rec.startsWith('✅') ? 'rec-yes' : (rec === 'Mer data' ? 'rec-neutral' : 'rec-no');
+    lastTimeEl.innerHTML = `Förra passet: <strong>${fmt(last.weight)} kg</strong> · ${last.reps.join(' · ')}<br>
+      <span class="rec-badge ${recClass}">${rec}</span>`;
   }
 
   function selectExercise(i){
@@ -1447,6 +1475,11 @@
     const volymSenastePasset = styrka.filter(r => r.pass_id === lastStyrkaPassId).reduce((s, r) => s + (r.vikt_kg || 0) * (r.reps || 0), 0);
     const langder = passSummary.map(p => p.langdMin).filter(l => l !== null);
     const snittLangd = langder.length ? Math.round((langder.reduce((a, b) => a + b, 0) / langder.length) * 10) / 10 : null;
+    // NEW (2026-09-14): total time actually spent in the gym, alongside the existing
+    // per-pass average — same "known limitation" as snittLangd/Pass!Längd (only counts
+    // the span between the first and last logged STRENGTH set, so warm-up/changing-room
+    // time before that is never included — an underestimate of real time, not exact).
+    const totalTidMin = langder.length ? Math.round(langder.reduce((a, b) => a + b, 0) * 10) / 10 : null;
     const kroppsvikt = vikt.length ? vikt[vikt.length - 1].vikt_kg : null;
 
     // ---- per exercise (mirrors the Sheet's Övningar table + Beräkningar's "Öka vikt?"
@@ -1474,12 +1507,8 @@
       const rpeForra = rpeOf(prevSets);
       const utveckling = senasteVikt !== null ? Math.round((senasteVikt - ex.startWeight) * 10) / 10 : null;
 
-      let okaVikt = 'Mer data';
-      if(passOrder.length >= 2){
-        const prevVikt = weightOf(prevSets);
-        okaVikt = (rpeNu !== null && rpeForra !== null && rpeNu <= 7 && rpeForra <= 7 && senasteVikt === prevVikt)
-          ? '✅ Öka vikt' : '➖ Behåll vikt';
-      }
+      // Shared with the main Styrka screen's renderLastTime() — one rule, defined once.
+      const okaVikt = okaViktRecommendation(passOrder.length, senasteVikt, rpeNu, weightOf(prevSets), rpeForra);
 
       // One point per pass this exercise was actually logged in — never a 0 for a
       // skipped pass, matching the Sheet's Progression tab rule (blank, not 0, so the
@@ -1511,7 +1540,7 @@
     const kroppsviktSeries = vikt.map(v => ({ datum: v.datum, vikt: v.vikt_kg }));
 
     return {
-      oversikt: { totalPass, passDennaVecka, passDennaManad, snittPassPerVecka, dagarSedanPass, totalVolym, volymSenastePasset, snittLangd, kroppsvikt, redoAttOka },
+      oversikt: { totalPass, passDennaVecka, passDennaManad, snittPassPerVecka, dagarSedanPass, totalVolym, volymSenastePasset, snittLangd, totalTidMin, kroppsvikt, redoAttOka },
       ovningar, veckor, kroppsviktSeries,
     };
   }
@@ -1604,6 +1633,7 @@
       ${kpi('Redo öka vikt', o.redoAttOka)}
       ${kpi('Total volym', fmt(Math.round(o.totalVolym)), 'kg')}
       ${kpi('Volym senaste pass', fmt(Math.round(o.volymSenastePasset)), 'kg')}
+      ${kpi('Total tid i gymmet', o.totalTidMin !== null ? fmt(Math.round(o.totalTidMin / 60 * 10) / 10) : '–', 'timmar')}
       ${kpi('Snitt passlängd', o.snittLangd !== null ? fmt(o.snittLangd) : '–', 'min')}
       ${kpi('Kroppsvikt', o.kroppsvikt !== null ? fmt(o.kroppsvikt) : '–', 'kg')}
     </div>`;
