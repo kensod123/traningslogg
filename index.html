@@ -173,6 +173,18 @@
 
   .rest-note{ text-align:center; font-size:11.5px; color:var(--muted); margin-top:14px; font-family:'JetBrains Mono',monospace; }
 
+  /* NEW (2026-09-14): persistent, hard-to-miss export-failure warning — see
+     exportWarningBanner's own comment above the markup for why this exists. */
+  .export-warning{
+    background:rgba(224,100,95,0.12); border:1.5px solid #e0645f; border-radius:12px;
+    padding:12px 14px; margin-bottom:14px; font-size:12.5px; color:#f0a5a1; line-height:1.5;
+  }
+  .export-warning b{ color:#fff; }
+  .export-warning button{
+    display:block; width:100%; margin-top:10px; padding:10px; border-radius:9px; border:1.5px solid #e0645f;
+    background:transparent; color:#f0a5a1; font-family:'Inter',sans-serif; font-weight:600; font-size:12.5px; cursor:pointer;
+  }
+
   .all-done{
     text-align:center; padding:20px; background:rgba(111,207,151,0.08); border:1px solid var(--ok);
     border-radius:14px; margin-bottom:14px; font-family:'Space Grotesk',sans-serif; font-weight:600; color:var(--ok);
@@ -341,6 +353,13 @@
     <h1>Träningslogg</h1>
     <div class="sub">PT-schema · Uppvärmning, rörlighet, styrka, kondition och vikt.</div>
   </header>
+
+  <!-- NEW (2026-09-14): persistent export-failure warning — deliberately NOT a toast
+       that fades on its own. A real gym session once silently failed to reach Postgres
+       under the old code (Sheet succeeded, Postgres didn't, nothing ever told Kecke) —
+       this banner survives closing/reopening the app and only clears once a re-export is
+       verified to have actually landed. See updateExportWarningBanner(). -->
+  <div class="export-warning" id="exportWarningBanner" style="display:none;"></div>
 
   <div class="section-toggle" id="sectionToggle">
     <button data-sec="warmup">Uppvärmning</button>
@@ -529,7 +548,7 @@
     return w || m || s || c || wt;
   }
   function savePending(){
-    try { localStorage.setItem(PENDING_KEY, JSON.stringify({ passId: PASS_ID, warmup: warmupState, mobility: mobilityDone, strength: sessionState, cardio: cardioState, weight: weightEntries, pgSentCount })); }
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify({ passId: PASS_ID, warmup: warmupState, mobility: mobilityDone, strength: sessionState, cardio: cardioState, weight: weightEntries, pgSentCount, exportFailed })); }
     catch(e){ /* private browsing / storage disabled — session just won't survive a reload */ }
   }
 
@@ -1025,6 +1044,26 @@
   // worth the schema change for a single-user app.
   let pgSentCount = (pendingHasData(savedPending) && savedPending.pgSentCount) ? savedPending.pgSentCount : {};
 
+  // NEW (2026-09-14): survives a page reload/app close on purpose — a real gym session
+  // once failed to reach Postgres and nothing ever told Kecke, because the old warning
+  // (if any) was just transient button text that quietly reverted. This persists until
+  // an export actually succeeds AND verifies, however long that takes. Loaded from the
+  // same object savePending() already writes, independent of pendingHasData() (a failed
+  // export can leave pendingCount at 0 for legs that DID succeed while others didn't).
+  let exportFailed = (() => {
+    try { return JSON.parse(localStorage.getItem(PENDING_KEY) || 'null')?.exportFailed || null; }
+    catch(e){ return null; }
+  })();
+  const exportWarningEl = document.getElementById('exportWarningBanner');
+  function updateExportWarningBanner(){
+    if(!exportFailed){ exportWarningEl.style.display = 'none'; return; }
+    exportWarningEl.style.display = '';
+    exportWarningEl.innerHTML = `⚠️ <b>Export misslyckades eller kunde inte bekräftas.</b><br>${exportFailed}<br>Dina data finns kvar sparade i telefonen — inget är förlorat. Tryck Exportera igen.
+      <button id="btnRetryFromWarning">Försök igen</button>`;
+    document.getElementById('btnRetryFromWarning').addEventListener('click', openExportConfirm);
+  }
+  updateExportWarningBanner();
+
   const weightInput = document.getElementById('weightInput');
   const bmiReadoutEl = document.getElementById('bmiReadout');
 
@@ -1075,6 +1114,8 @@
     cardioState = warmupExercises.map(() => ({ duration: null, time: null }));
     weightEntries = [];
     pgSentCount = {};
+    exportFailed = null;
+    updateExportWarningBanner();
     renderWeightList();
     renderCardio();
     renderWarmup();
@@ -1219,6 +1260,36 @@
     }
   }
 
+  // ---------- Write verification (2026-09-14) ----------
+  // NEW, because a real gym session (2026-09-07, 18 sets) once got a clean-looking
+  // response from Postgres and STILL never actually landed there — a non-error POST
+  // response was never proof the row was actually committed and queryable, only proof
+  // the request was sent. This reads the just-written rows straight back with
+  // gym_reader before the app is allowed to trust a leg succeeded.
+  async function verifyPassLeg(path, passId, expectedCount){
+    try{
+      const rows = await pgGet(path + '?pass_id=eq.' + encodeURIComponent(passId) + '&select=pass_id');
+      return rows.length === expectedCount;
+    } catch(e){
+      console.warn('[verify] ' + path + ' check failed:', e);
+      return false;
+    }
+  }
+  // Vikt has no pass_id (standalone weigh-ins) — verify each entry individually by its
+  // own datum+tid, which together are unique enough for this single-user app's volume.
+  async function verifyViktLeg(entries){
+    try{
+      for(const w of entries){
+        const rows = await pgGet('/vikt?datum=eq.' + encodeURIComponent(w.datum) + '&tid=eq.' + encodeURIComponent(w.tid || '') + '&select=vikt_kg&limit=1');
+        if(!rows.length) return false;
+      }
+      return true;
+    } catch(e){
+      console.warn('[verify] /vikt check failed:', e);
+      return false;
+    }
+  }
+
   // Postgres is the sole backend as of the 2026-09-13 cutover — no more Sheet leg here.
   // Each "leg" (one table) is sent independently and tracked in pgSentCount so a partial
   // failure (say uppvärmning rejected while styrka_sets succeeded) never resends a leg
@@ -1247,7 +1318,18 @@
 
       const toSend = legs.filter(l => l.rows.length && pgSentCount[l.key] !== l.rows.length);
       const results = await Promise.all(toSend.map(l => postgresWrite(l.path, l.rows)));
-      toSend.forEach((l, i) => { if(results[i].ok) pgSentCount[l.key] = l.rows.length; });
+
+      // NEW (2026-09-14): a non-error POST is no longer trusted on its own — verify each
+      // leg that reported success by actually reading it back before marking it sent.
+      // This is exactly the check that would have caught the 2026-09-07 silent-failure
+      // session (Sheet had it, Postgres never did, nothing ever warned about it).
+      const verifyResults = await Promise.all(toSend.map((l, i) => {
+        if(!results[i].ok) return false;
+        if(l.key === 'vikt') return verifyViktLeg(l.rows.map(r => ({ datum: r.datum, tid: r.tid })));
+        return verifyPassLeg(l.path, PASS_ID, l.rows.length);
+      }));
+      const outcomes = toSend.map((l, i) => ({ leg: l, postOk: results[i].ok, verified: verifyResults[i], result: results[i] }));
+      outcomes.forEach(o => { if(o.postOk && o.verified) pgSentCount[o.leg.key] = o.leg.rows.length; });
 
       const stillPending = legs.some(l => l.rows.length && pgSentCount[l.key] !== l.rows.length);
       if(!stillPending){
@@ -1255,12 +1337,24 @@
         clearPendingSession();
         fetchLastSessions(); // so a same-day second pass sees what was just logged
       } else {
-        const anyUnreachable = results.some(r => !r.ok && r.reason === 'unreachable');
+        const unverified = outcomes.filter(o => o.postOk && !o.verified);
+        const failed = outcomes.filter(o => !o.postOk);
+        const anyUnreachable = failed.some(o => o.result.reason === 'unreachable');
         btnExport.textContent = anyUnreachable ? 'Ingen anslutning — försök igen senare' : 'Fel: kunde inte spara — försök igen';
-        savePending(); // persist pgSentCount progress so a retry skips whatever already succeeded
+        // Persistent banner, not just this button's transient text — see
+        // updateExportWarningBanner()'s own comment for why that distinction matters now.
+        const parts = [];
+        if(unverified.length) parts.push(`${unverified.map(o => o.leg.key).join(', ')} skickades men kunde inte bekräftas i Postgres`);
+        if(failed.length) parts.push(`${failed.map(o => o.leg.key).join(', ')} misslyckades (${anyUnreachable ? 'ingen anslutning' : 'avvisades'})`);
+        exportFailed = parts.join(' · ') || 'Okänt fel vid export.';
+        updateExportWarningBanner();
+        savePending(); // persist pgSentCount + exportFailed so a retry skips whatever already verified
       }
     } catch(err){
       btnExport.textContent = 'Fel: ' + ((err && err.message) || err);
+      exportFailed = 'Oväntat fel: ' + ((err && err.message) || err);
+      updateExportWarningBanner();
+      savePending();
     }
     setTimeout(() => { btnExport.textContent = 'Exportera'; updateExportUi(); }, 2500);
   }
@@ -1425,15 +1519,57 @@
   // Minimal hand-rolled SVG line chart — no library, matching how the rest of this app
   // (and Fiskelog's NappNytt) has always drawn everything with plain HTML/CSS/SVG.
   // seriesList: [{ color, points: [{t: <sortable number, e.g. a Date's getTime()>, v: number}] }]
-  function buildLineChartSVG(width, height, seriesList){
+  // "13/9" — short day/month, enough to place a point in time without eating chart width.
+  function fmtDateShort(t){
+    const d = new Date(t);
+    return d.getDate() + '/' + (d.getMonth() + 1);
+  }
+
+  // NEW (2026-09-14): real axis ticks + gridlines — was just bare polylines with no scale
+  // at all, per Kecke's feedback that a line with no numbers on it isn't actually readable.
+  // Left/bottom padding grows to fit the tick labels; everything else about the "no chart
+  // library, hand-rolled SVG" approach is unchanged.
+  // zeroBaseline (default true): clamp the y-axis floor to 0 — right for the multi-
+  // exercise chart, where a shared zero baseline keeps different exercises' absolute
+  // weights honestly comparable. Pass false for a single-series trend chart like
+  // bodyweight, where the audience cares about the fluctuation, not the distance from
+  // 0kg — clamping that to 0 flattened a real ~2kg swing into an almost invisible line.
+  function buildLineChartSVG(width, height, seriesList, opts){
+    const zeroBaseline = !opts || opts.zeroBaseline !== false;
     const allPoints = seriesList.flatMap(s => s.points);
     if(!allPoints.length) return '<div class="dash-empty">Ingen data ännu</div>';
     const ts = allPoints.map(p => p.t), vs = allPoints.map(p => p.v);
     const tMin = Math.min(...ts), tMax = Math.max(...ts);
-    const vMin = Math.min(0, ...vs), vMax = Math.max(...vs) || 1;
-    const pad = 6;
-    const sx = t => pad + (tMax > tMin ? (t - tMin) / (tMax - tMin) : 0.5) * (width - pad * 2);
-    const sy = v => height - pad - (vMax > vMin ? (v - vMin) / (vMax - vMin) : 0.5) * (height - pad * 2);
+    let vMin = zeroBaseline ? Math.min(0, ...vs) : Math.min(...vs);
+    let vMax = Math.max(...vs) || 1;
+    if(!zeroBaseline){
+      const range = (vMax - vMin) || 1;
+      vMin -= range * 0.1;
+      vMax += range * 0.1;
+    }
+
+    const padL = 34, padR = 6, padT = 8, padB = 16;
+    const plotW = width - padL - padR, plotH = height - padT - padB;
+    const sx = t => padL + (tMax > tMin ? (t - tMin) / (tMax - tMin) : 0.5) * plotW;
+    const sy = v => padT + plotH - (vMax > vMin ? (v - vMin) / (vMax - vMin) : 0.5) * plotH;
+
+    // Y-axis: min/mid/max, with a faint gridline at each so a value can actually be read
+    // off the chart instead of just eyeballing a slope.
+    const yTicks = vMax > vMin ? [vMin, (vMin + vMax) / 2, vMax] : [vMin];
+    const yAxisHtml = yTicks.map(v => {
+      const y = sy(v).toFixed(1);
+      return `<line x1="${padL}" y1="${y}" x2="${width - padR}" y2="${y}" stroke="var(--stroke)" stroke-width="1"/>` +
+        `<text x="${padL - 5}" y="${y}" text-anchor="end" dominant-baseline="middle" font-size="8" font-family="JetBrains Mono, monospace" fill="var(--muted)">${fmt(Math.round(v * 10) / 10)}</text>`;
+    }).join('');
+
+    // X-axis: first/mid/last date actually in the data (not evenly-spaced calendar ticks —
+    // there's no guarantee of even spacing between logged passes/weigh-ins).
+    const xTicks = tMax > tMin ? [tMin, (tMin + tMax) / 2, tMax] : [tMin];
+    const xAxisHtml = xTicks.map(t => {
+      const x = sx(t).toFixed(1);
+      return `<text x="${x}" y="${height - 3}" text-anchor="middle" font-size="8" font-family="JetBrains Mono, monospace" fill="var(--muted)">${fmtDateShort(t)}</text>`;
+    }).join('');
+
     const shapes = seriesList.map(s => {
       if(s.points.length === 1){
         const p = s.points[0];
@@ -1443,7 +1579,7 @@
       const d = s.points.map(p => `${sx(p.t).toFixed(1)},${sy(p.v).toFixed(1)}`).join(' ');
       return `<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
     }).join('');
-    return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" preserveAspectRatio="none">${shapes}</svg>`;
+    return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" preserveAspectRatio="none">${yAxisHtml}${xAxisHtml}${shapes}</svg>`;
   }
 
   function dashboardNavHTML(active){
@@ -1518,9 +1654,31 @@
       </table></div>`;
   }
 
+  // NEW (2026-09-14): exact numbers to go with the charts below — Kecke wanted a table
+  // of every exercise's starting weight vs. current weight and the % change, not just a
+  // line to eyeball. % is relative to the PT's prescribed startWeight, same baseline
+  // Övningar's "Utv." column already uses (see computeTraningsStats).
+  function renderDashUtvecklingTableHTML(stats){
+    const rows = stats.ovningar.map(o => {
+      const curr = o.senasteVikt;
+      const pct = (curr !== null && o.startvikt) ? Math.round(((curr - o.startvikt) / o.startvikt) * 1000) / 10 : null;
+      return `
+        <tr>
+          <td>${o.short}</td>
+          <td>${fmt(o.startvikt)}</td>
+          <td>${curr !== null ? fmt(curr) : '–'}</td>
+          <td class="${pct !== null && pct > 0 ? 'dash-oka-yes' : ''}">${pct !== null ? (pct > 0 ? '+' : '') + fmt(pct) + '%' : '–'}</td>
+        </tr>`;
+    }).join('');
+    return `<div class="dash-table-wrap"><table class="dash-table">
+      <thead><tr><th>Övning</th><th>Startvikt</th><th>Nuvarande</th><th>% ökning</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
   function renderDashUtvecklingHTML(stats){
     const bwPoints = stats.kroppsviktSeries.map(p => ({ t: parseDateStr(p.datum).getTime(), v: p.vikt }));
-    const bwChart = buildLineChartSVG(320, 90, [{ color: '#E8A33D', points: bwPoints }]);
+    const bwChart = buildLineChartSVG(320, 100, [{ color: '#E8A33D', points: bwPoints }], { zeroBaseline: false });
 
     const exSeries = stats.ovningar
       .filter(o => o.series.some(p => p.vikt !== null))
@@ -1529,10 +1687,12 @@
         short: o.short,
         points: o.series.filter(p => p.vikt !== null).map(p => ({ t: parseDateStr(p.datum).getTime(), v: p.vikt })),
       }));
-    const exChart = buildLineChartSVG(320, 140, exSeries);
+    const exChart = buildLineChartSVG(320, 150, exSeries);
     const legend = exSeries.map(s => `<div class="dash-legend-item"><span class="dash-legend-swatch" style="background:${s.color}"></span>${s.short}</div>`).join('');
 
     return `
+      <div class="dash-section-title">Utveckling per övning</div>
+      ${renderDashUtvecklingTableHTML(stats)}
       <div class="dash-section-title">Kroppsvikt över tid</div>
       <div class="dash-chart-card">${bwChart}</div>
       <div class="dash-section-title">Vikt per övning över tid</div>
